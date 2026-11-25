@@ -19,6 +19,7 @@ import type {
   Player,
   ThemeMode,
   ThrowDirection,
+  VerifiedSolution,
   WindWisp,
 } from './types';
 
@@ -35,6 +36,8 @@ export interface RenderState {
   aimDirection: ThrowDirection;
   showAimHint: boolean;
   showPhysicsLab: boolean;
+  showSolution: boolean;
+  verifiedSolution: VerifiedSolution | null;
   showAimingGuides: boolean;
   banana: Banana | null;
   sunShocked: boolean;
@@ -209,6 +212,11 @@ export class GameRenderer {
     const activePlayer = state.players[state.activePlayerIndex];
     if (activePlayer?.lastShot && activePlayer.lastShot.points.length > 1) {
       this.drawGhostTrail(ctx, activePlayer, state.theme);
+    }
+
+    // 6b. Verified Solution trajectory overlay (when toggled On)
+    if (state.showAimingGuides && state.showSolution && activePlayer && !activePlayer.isBot) {
+      this.drawSolutionOverlay(ctx, state);
     }
 
     // 7. Aiming guides (vector, Vx/Vy, optional aim hint)
@@ -1086,6 +1094,85 @@ export class GameRenderer {
       ctx.fillText(ft.text, ft.x, ft.y);
       ctx.restore();
     }
+  }
+
+  private drawSolutionOverlay(ctx: CanvasRenderingContext2D, state: RenderState): void {
+    const sol = state.verifiedSolution;
+    const theme = state.theme;
+    ctx.save();
+
+    if (!sol || sol.points.length < 2) {
+      // Explain clearly if player walked into an obstructed spot
+      const msg = 'No direct arc from this spot — step left/right or blast a tunnel!';
+      ctx.font =
+        theme === 'retro'
+          ? 'bold 12px "Courier New", monospace'
+          : '700 12px system-ui, sans-serif';
+      const w = ctx.measureText(msg).width + 20;
+      const cx = WORLD_WIDTH / 2;
+      const cy = 190;
+      ctx.fillStyle = theme === 'retro' ? '#550000' : 'rgba(127, 29, 29, 0.85)';
+      this.roundRect(ctx, cx - w / 2, cy - 13, w, 26, theme === 'retro' ? 0 : 12);
+      ctx.fill();
+      ctx.fillStyle = '#fecaca';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(msg, cx, cy);
+      ctx.restore();
+      return;
+    }
+
+    const lineColor = theme === 'retro' ? '#55ff55' : '#34d399';
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = theme === 'retro' ? 2.6 : 3;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.moveTo(sol.points[0].x, sol.points[0].y);
+    for (let i = 1; i < sol.points.length; i++) {
+      ctx.lineTo(sol.points[i].x, sol.points[i].y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Pulsing target ring at impact point
+    const last = sol.points[sol.points.length - 1];
+    const pulse = 1 + Math.sin(state.timeSec * 6) * 0.14;
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(last.x, last.y, 18 * pulse, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Label near highest visible point on arc
+    let labelPt = sol.points[Math.floor(sol.points.length / 2)];
+    for (const pt of sol.points) {
+      if (pt.y < labelPt.y && pt.y > 42 && pt.x > 110 && pt.x < WORLD_WIDTH - 110) {
+        labelPt = pt;
+      }
+    }
+    const dirLabel = sol.direction > 0 ? 'Right →' : '← Left';
+    const text = `Solution: ${sol.angleDeg}° · ${sol.speed} m/s (${dirLabel})`;
+    ctx.font =
+      theme === 'retro'
+        ? 'bold 12px "Courier New", monospace'
+        : '700 12px system-ui, sans-serif';
+    const w = ctx.measureText(text).width + 20;
+    const lx = Math.max(w / 2 + 12, Math.min(WORLD_WIDTH - w / 2 - 12, labelPt.x));
+    const ly = Math.max(36, Math.min(WORLD_HEIGHT - 120, labelPt.y - 16));
+
+    ctx.fillStyle = theme === 'retro' ? '#003300' : 'rgba(6, 78, 59, 0.88)';
+    this.roundRect(ctx, lx - w / 2, ly - 13, w, 26, theme === 'retro' ? 0 : 12);
+    ctx.fill();
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+
+    ctx.fillStyle = '#ecfdf5';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, lx, ly);
+
+    ctx.restore();
   }
 
   private roundRect(

@@ -25,6 +25,9 @@
           <button id="btn-hint" class="tool-btn" type="button" aria-pressed="false" title="Show short aiming arc preview">
             Aim Hint: Off
           </button>
+          <button id="btn-solution" class="tool-btn" type="button" aria-pressed="false" title="Show a verified winning trajectory and exact settings">
+            Solution: Off
+          </button>
           <button id="btn-lab" class="tool-btn" type="button" aria-pressed="true" title="Show Vx/Vy vectors and Physics Lab stats">
             Physics Lab: On
           </button>
@@ -49,6 +52,7 @@
           <div id="turn-banner" class="hud-banner" aria-live="polite">
             <span id="turn-dot" class="turn-dot"></span>
             <span id="turn-text">Get ready to throw!</span>
+            <span id="tries-badge" class="tries-badge">Try 1 / 3</span>
           </div>
 
           <div id="scoreboard-strip" class="hud-scores" aria-label="Scoreboard"></div>
@@ -56,9 +60,17 @@
           <div id="toast-banner" class="toast-banner hidden" aria-live="polite"></div>
         </div>
 
-        <section id="controls-dock" class="controls-dock" aria-label="Throw controls">
+        <section id="controls-dock" class="controls-dock" aria-label="Throw and movement controls">
+          <div class="control-group control-group--move">
+            <span id="move-label" class="control-label">Move (8 left)</span>
+            <div class="dir-toggle" role="group" aria-label="Move gorilla left or right">
+              <button id="btn-move-left" class="dir-btn" type="button" title="Walk left (A key) — can drop down, can't climb up">← Step</button>
+              <button id="btn-move-right" class="dir-btn" type="button" title="Walk right (D key) — can drop down, can't climb up">Step →</button>
+            </div>
+          </div>
+
           <div class="control-group control-group--dir">
-            <span class="control-label">Direction</span>
+            <span class="control-label">Aim Side</span>
             <div class="dir-toggle" role="group" aria-label="Throw direction">
               <button id="btn-dir-left" class="dir-btn" type="button">← Left</button>
               <button id="btn-dir-right" class="dir-btn active" type="button">Right →</button>
@@ -118,7 +130,7 @@
             </div>
           </div>
           <p id="lab-tip" class="lab-tip">
-            Tip: Drag directly in the sky or use sliders to aim. Watch how Vx (horizontal) and Vy (vertical) trade off as you change angle!
+            Tip: Walk left/right (A/D) to reposition or drop onto lower roofs! You get multiple tries per turn to learn from your dotted ghost trail.
           </p>
         </section>
       </main>
@@ -129,7 +141,7 @@
           <div class="modal-header">
             <h2 id="setup-title">New Banana Arc Match</h2>
             <p class="modal-subtitle">
-              Inspired by 1991's QBasic Gorillas — aim with angle &amp; speed, blast through skyscrapers, and explore projectile physics!
+              Inspired by 1991's QBasic Gorillas — every skyline is verified solvable! Move across roofs, take multiple tries to dial in your arc, and explore physics.
             </p>
           </div>
 
@@ -144,12 +156,23 @@
               </div>
             </div>
 
-            <div class="setup-field">
-              <label class="field-label">Rounds (Turns per Player)</label>
-              <div id="setup-rounds" class="segmented">
-                <button type="button" data-rounds="3" class="seg-btn">3 Rounds</button>
-                <button type="button" data-rounds="5" class="seg-btn active">5 Rounds</button>
-                <button type="button" data-rounds="7" class="seg-btn">7 Rounds</button>
+            <div class="setup-row-split">
+              <div class="setup-field">
+                <label class="field-label">Rounds</label>
+                <div id="setup-rounds" class="segmented">
+                  <button type="button" data-rounds="3" class="seg-btn">3</button>
+                  <button type="button" data-rounds="5" class="seg-btn active">5</button>
+                  <button type="button" data-rounds="7" class="seg-btn">7</button>
+                </div>
+              </div>
+
+              <div class="setup-field">
+                <label class="field-label">Tries per Turn</label>
+                <div id="setup-tries" class="segmented">
+                  <button type="button" data-tries="1" class="seg-btn">1 Try</button>
+                  <button type="button" data-tries="3" class="seg-btn active">3 Tries</button>
+                  <button type="button" data-tries="4" class="seg-btn">4 Tries</button>
+                </div>
               </div>
             </div>
 

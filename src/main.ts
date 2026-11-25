@@ -9,14 +9,17 @@ import {
   LONG_SHOT_METERS,
   MAX_ANGLE,
   MAX_FLIGHT_SEC,
+  MAX_MOVES_PER_TURN,
   MAX_SPEED,
   MIN_ANGLE,
   MIN_SPEED,
+  MOVE_STEP_PX,
   PIXELS_PER_METER,
   PLANETS,
   PLANET_ORDER,
   PLAYER_PRESETS,
   SCORE_DIRECT_HIT,
+  SCORE_FIRST_TRY_BONUS,
   SCORE_LONG_SHOT_BONUS,
   SCORE_SPLASH_HIT,
   SCORE_SUN_BONK,
@@ -33,13 +36,18 @@ import {
   computeAwards,
   computeVelocityComponents,
   evaluateProjectilePosition,
+  findVerifiedSolution,
   generatePhysicsTip,
   radToDeg,
   solveBotShot,
   theoreticalFlatRange,
 } from './physics';
 import { GameRenderer } from './renderer';
-import { generateSkyline, selectSpawnBuildings, SkylineTerrain } from './skyline';
+import {
+  generateSolvableRound,
+  SkylineTerrain,
+  tryMoveGorilla,
+} from './skyline';
 import type {
   Banana,
   BotDifficulty,
@@ -51,6 +59,7 @@ import type {
   Player,
   ThemeMode,
   ThrowDirection,
+  VerifiedSolution,
   WindWisp,
 } from './types';
 
@@ -70,15 +79,20 @@ class GorillaPhysicsGame {
   private planetBadge = byId<HTMLSpanElement>('planet-badge');
   private btnTheme = byId<HTMLButtonElement>('btn-theme');
   private btnHint = byId<HTMLButtonElement>('btn-hint');
+  private btnSolution = byId<HTMLButtonElement>('btn-solution');
   private btnLab = byId<HTMLButtonElement>('btn-lab');
   private btnSound = byId<HTMLButtonElement>('btn-sound');
   private btnNewGame = byId<HTMLButtonElement>('btn-new-game');
 
   private turnDot = byId<HTMLSpanElement>('turn-dot');
   private turnText = byId<HTMLSpanElement>('turn-text');
+  private triesBadge = byId<HTMLSpanElement>('tries-badge');
   private scoreboardStrip = byId<HTMLDivElement>('scoreboard-strip');
   private toastBanner = byId<HTMLDivElement>('toast-banner');
 
+  private moveLabel = byId<HTMLSpanElement>('move-label');
+  private btnMoveLeft = byId<HTMLButtonElement>('btn-move-left');
+  private btnMoveRight = byId<HTMLButtonElement>('btn-move-right');
   private btnDirLeft = byId<HTMLButtonElement>('btn-dir-left');
   private btnDirRight = byId<HTMLButtonElement>('btn-dir-right');
   private inputAngle = byId<HTMLInputElement>('input-angle');
@@ -99,6 +113,7 @@ class GorillaPhysicsGame {
   private setupModal = byId<HTMLDivElement>('setup-modal');
   private setupPlayerCount = byId<HTMLDivElement>('setup-player-count');
   private setupRounds = byId<HTMLDivElement>('setup-rounds');
+  private setupTries = byId<HTMLDivElement>('setup-tries');
   private botSkillRow = byId<HTMLDivElement>('bot-skill-row');
   private setupBotSkill = byId<HTMLDivElement>('setup-bot-skill');
   private setupNames = byId<HTMLDivElement>('setup-names');
@@ -120,6 +135,7 @@ class GorillaPhysicsGame {
   private config: GameConfig = {
     humanCount: 2,
     rounds: 5,
+    triesPerTurn: 3,
     planetId: 'earth',
     botDifficulty: 'easy',
     playerNames: PLAYER_PRESETS.map((p) => p.defaultName),
@@ -127,6 +143,7 @@ class GorillaPhysicsGame {
 
   private theme: ThemeMode = 'modern';
   private showAimHint = false;
+  private showSolution = false; // Defaults to Off!
   private showPhysicsLab = true;
   private phase: GamePhase = 'setup';
 
@@ -135,6 +152,11 @@ class GorillaPhysicsGame {
   private activePlayerIndex = 0;
   private currentRound = 1;
   private turnsTakenInRound = 0;
+
+  private triesRemaining = 3;
+  private movesRemaining = MAX_MOVES_PER_TURN;
+  private turnEndedByHit = false;
+  private verifiedSolution: VerifiedSolution | null = null;
 
   private windAccel = 0; // m/s^2
   private aimAngle = 45;
@@ -164,14 +186,14 @@ class GorillaPhysicsGame {
     if (!ctx) throw new Error('2D canvas not supported');
     this.ctx = ctx;
 
-    this.terrain = new SkylineTerrain(generateSkyline(WORLD_WIDTH, WORLD_HEIGHT, 1991));
+    const preview = generateSolvableRound(2, PLANETS.earth.gravity, true, 1991);
+    this.terrain = preview.terrain;
     this.initAtmosphere();
     this.initSetupUI();
     this.bindEvents();
     this.syncToolbarUI();
 
-    // Render an attractive background skyline behind the setup modal right away
-    this.setupPreviewScene();
+    this.setupPreviewScene(preview);
 
     this.lastFrameMs = performance.now();
     requestAnimationFrame((now) => this.loop(now));
@@ -196,14 +218,12 @@ class GorillaPhysicsGame {
     }));
   }
 
-  private setupPreviewScene(): void {
-    const buildings = generateSkyline(WORLD_WIDTH, WORLD_HEIGHT, 1991);
-    this.terrain = new SkylineTerrain(buildings);
+  private setupPreviewScene(preview: ReturnType<typeof generateSolvableRound>): void {
+    this.terrain = preview.terrain;
     this.renderer.invalidateBuildings();
-    this.windAccel = 1.2;
-    const spawns = selectSpawnBuildings(buildings, 2, () => 0.2);
-    this.players = spawns.map((bIdx, i) => {
-      const b = buildings[bIdx];
+    this.windAccel = preview.windAccel;
+    this.players = preview.spawnIndices.map((bIdx, i) => {
+      const b = this.terrain.buildings[bIdx];
       const preset = PLAYER_PRESETS[i];
       return this.createPlayer(i, preset.defaultName, preset, false, b.x + b.width / 2, b.topY, bIdx);
     });
@@ -249,7 +269,6 @@ class GorillaPhysicsGame {
   }
 
   private initSetupUI(): void {
-    // Populate planet buttons
     this.setupPlanets.innerHTML = '';
     for (const id of PLANET_ORDER) {
       const p = PLANETS[id];
@@ -303,7 +322,6 @@ class GorillaPhysicsGame {
   }
 
   private bindEvents(): void {
-    // Setup segmented buttons
     this.setupPlayerCount.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-count]');
       if (!btn) return;
@@ -318,6 +336,14 @@ class GorillaPhysicsGame {
       if (!btn) return;
       this.config.rounds = Number(btn.dataset.rounds);
       this.setupRounds.querySelectorAll('.seg-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+
+    this.setupTries.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tries]');
+      if (!btn) return;
+      this.config.triesPerTurn = Number(btn.dataset.tries);
+      this.setupTries.querySelectorAll('.seg-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
     });
 
@@ -350,6 +376,15 @@ class GorillaPhysicsGame {
       soundEngine.playTick();
     });
 
+    this.btnSolution.addEventListener('click', () => {
+      this.showSolution = !this.showSolution;
+      if (this.showSolution) {
+        this.refreshVerifiedSolution();
+      }
+      this.syncToolbarUI();
+      soundEngine.playTick();
+    });
+
     this.btnLab.addEventListener('click', () => {
       this.showPhysicsLab = !this.showPhysicsLab;
       this.setupLabCheck.checked = this.showPhysicsLab;
@@ -374,6 +409,9 @@ class GorillaPhysicsGame {
     });
 
     // Controls dock
+    this.btnMoveLeft.addEventListener('click', () => this.moveActiveGorilla(-1));
+    this.btnMoveRight.addEventListener('click', () => this.moveActiveGorilla(1));
+
     this.btnDirLeft.addEventListener('click', () => this.setAimDirection(-1));
     this.btnDirRight.addEventListener('click', () => this.setAimDirection(1));
 
@@ -435,7 +473,16 @@ class GorillaPhysicsGame {
       if (!this.canHumanControl()) return;
 
       const step = e.shiftKey ? 5 : 1;
-      if (e.key === 'ArrowUp') {
+      if (e.key === 'a' || e.key === 'A') {
+        e.preventDefault();
+        this.moveActiveGorilla(-1);
+      } else if (e.key === 'd' || e.key === 'D') {
+        e.preventDefault();
+        this.moveActiveGorilla(1);
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        this.setAimDirection(this.aimDirection === 1 ? -1 : 1);
+      } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         this.setAimAngle(this.aimAngle + step);
       } else if (e.key === 'ArrowDown') {
@@ -447,9 +494,6 @@ class GorillaPhysicsGame {
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
         this.setAimSpeed(this.aimSpeed - step);
-      } else if (e.key === 'd' || e.key === 'D') {
-        e.preventDefault();
-        this.setAimDirection(this.aimDirection === 1 ? -1 : 1);
       } else if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
         this.fireCurrentPlayerBanana();
@@ -468,6 +512,8 @@ class GorillaPhysicsGame {
     this.btnTheme.textContent = this.theme === 'modern' ? 'Theme: Modern' : "Theme: Retro '90s";
     this.btnHint.textContent = `Aim Hint: ${this.showAimHint ? 'On' : 'Off'}`;
     this.btnHint.setAttribute('aria-pressed', String(this.showAimHint));
+    this.btnSolution.textContent = `Solution: ${this.showSolution ? 'On' : 'Off'}`;
+    this.btnSolution.setAttribute('aria-pressed', String(this.showSolution));
     this.btnLab.textContent = `Physics Lab: ${this.showPhysicsLab ? 'On' : 'Off'}`;
     this.btnLab.setAttribute('aria-pressed', String(this.showPhysicsLab));
     this.physicsLabPanel.classList.toggle('hidden', !this.showPhysicsLab);
@@ -479,6 +525,125 @@ class GorillaPhysicsGame {
   private canHumanControl(): boolean {
     const active = this.players[this.activePlayerIndex];
     return this.phase === 'aiming' && Boolean(active) && !active.isBot;
+  }
+
+  private moveActiveGorilla(dir: -1 | 1): void {
+    if (!this.canHumanControl()) return;
+    if (this.movesRemaining <= 0) {
+      soundEngine.playBlocked();
+      const active = this.players[this.activePlayerIndex];
+      if (active) {
+        this.spawnFloatingText(active.x, active.y - 68, 'No steps left this turn!', '#fed7aa', 0.9);
+      }
+      return;
+    }
+
+    const active = this.players[this.activePlayerIndex];
+    if (!active) return;
+
+    const others = this.players
+      .filter((p) => p.id !== active.id)
+      .map((p) => ({ x: p.x, y: p.y }));
+
+    const result = tryMoveGorilla(
+      this.terrain,
+      active.x,
+      active.y,
+      dir * MOVE_STEP_PX,
+      others,
+    );
+
+    if (!result.moved) {
+      soundEngine.playBlocked();
+      const reasonMsg =
+        result.reason === 'wall'
+          ? "Can't climb taller roof!"
+          : result.reason === 'occupied'
+            ? 'Gorilla in the way!'
+            : 'Edge of skyline!';
+      this.spawnFloatingText(active.x, active.y - 68, reasonMsg, '#fca5a5', 0.9);
+      return;
+    }
+
+    active.x = result.x;
+    active.y = result.y;
+    active.buildingIndex = this.terrain.getBuildingIndexAt(active.x);
+    this.movesRemaining--;
+
+    soundEngine.playStep(result.dropped);
+    if (result.dropped) {
+      this.spawnDustPuff(active.x, active.y);
+      this.spawnFloatingText(active.x, active.y - 66, 'Dropped down!', '#bae6fd', 0.85);
+    }
+
+    this.updateMoveUI();
+    if (this.showSolution) {
+      this.refreshVerifiedSolution();
+    }
+  }
+
+  private spawnDustPuff(x: number, y: number): void {
+    for (let i = 0; i < 10; i++) {
+      this.particles.push({
+        x: x + (Math.random() - 0.5) * 16,
+        y: y - 2,
+        vx: (Math.random() - 0.5) * 90,
+        vy: -20 - Math.random() * 50,
+        size: 3 + Math.random() * 4,
+        color: this.theme === 'retro' ? '#cccccc' : '#e2e8f0',
+        life: 0.35 + Math.random() * 0.25,
+        maxLife: 0.6,
+        shape: this.theme === 'retro' ? 'square' : 'circle',
+        rotation: 0,
+        vRot: 0,
+        gravityScale: 0.3,
+      });
+    }
+  }
+
+  private updateMoveUI(): void {
+    this.moveLabel.textContent = `Move (${this.movesRemaining} left)`;
+    const canMove = this.canHumanControl() && this.movesRemaining > 0;
+    this.btnMoveLeft.disabled = !canMove;
+    this.btnMoveRight.disabled = !canMove;
+  }
+
+  private refreshVerifiedSolution(): void {
+    const active = this.players[this.activePlayerIndex];
+    if (!active || active.isBot) {
+      this.verifiedSolution = null;
+      return;
+    }
+
+    const planet = PLANETS[this.config.planetId];
+    const origin = { x: active.x, y: active.y - GORILLA_HAND_OFFSET_Y };
+
+    // Sort opponents so we check opponents in the active aim direction first
+    const opponents = this.players
+      .filter((p) => p.id !== active.id)
+      .sort((a, b) => {
+        const aMatches = Math.sign(a.x - active.x) === this.aimDirection ? 0 : 1;
+        const bMatches = Math.sign(b.x - active.x) === this.aimDirection ? 0 : 1;
+        if (aMatches !== bMatches) return aMatches - bMatches;
+        return Math.abs(a.x - active.x) - Math.abs(b.x - active.x);
+      });
+
+    for (const opp of opponents) {
+      const target = { x: opp.x, y: opp.y - 22 };
+      const sol = findVerifiedSolution(
+        origin,
+        target,
+        planet.gravity,
+        this.windAccel,
+        (x, y) => this.terrain.isSolid(x, y),
+      );
+      if (sol) {
+        this.verifiedSolution = { ...sol, targetPlayerId: opp.id };
+        return;
+      }
+    }
+
+    this.verifiedSolution = null;
   }
 
   private updateAimFromPointer(e: PointerEvent): void {
@@ -493,7 +658,7 @@ class GorillaPhysicsGame {
     const originY = active.y - GORILLA_HAND_OFFSET_Y;
 
     const dx = px - originX;
-    const dy = originY - py; // upward positive
+    const dy = originY - py;
 
     const dir: ThrowDirection = dx >= 0 ? 1 : -1;
     const absDx = Math.max(4, Math.abs(dx));
@@ -508,11 +673,15 @@ class GorillaPhysicsGame {
   }
 
   private setAimDirection(dir: ThrowDirection): void {
+    const changed = this.aimDirection !== dir;
     this.aimDirection = dir;
     this.btnDirLeft.classList.toggle('active', dir === -1);
     this.btnDirRight.classList.toggle('active', dir === 1);
     const active = this.players[this.activePlayerIndex];
     if (active) active.preferredDirection = dir;
+    if (changed && this.showSolution) {
+      this.refreshVerifiedSolution();
+    }
     this.updatePhysicsLabReadout();
   }
 
@@ -548,8 +717,8 @@ class GorillaPhysicsGame {
     this.banana = null;
     this.sunShocked = false;
     this.pendingRespawnIds = [];
+    this.verifiedSolution = null;
 
-    // Build player list
     const players: Player[] = [];
     for (let i = 0; i < this.config.humanCount; i++) {
       const preset = PLAYER_PRESETS[i];
@@ -562,36 +731,31 @@ class GorillaPhysicsGame {
     this.players = players;
 
     this.setupRoundSkyline();
-    this.beginTurn();
+    this.beginPlayerTurn();
   }
 
   private setupRoundSkyline(): void {
+    const planet = PLANETS[this.config.planetId];
     const seed = Date.now() ^ (this.currentRound * 9973);
-    const buildings = generateSkyline(WORLD_WIDTH, WORLD_HEIGHT, seed);
-    this.terrain = new SkylineTerrain(buildings);
+    const roundSetup = generateSolvableRound(
+      this.players.length,
+      planet.gravity,
+      this.config.planetId !== 'moon',
+      seed,
+    );
+
+    this.terrain = roundSetup.terrain;
+    this.windAccel = roundSetup.windAccel;
     this.renderer.invalidateBuildings();
     this.sunShocked = false;
 
-    // Pick wind acceleration (calm on Moon; realistic breeze/gusts on planets with atmospheres)
-    if (this.config.planetId === 'moon') {
-      this.windAccel = 0;
-    } else {
-      const raw = (Math.random() * 2 - 1) * 3.4;
-      this.windAccel = Math.abs(raw) < 0.35 ? 0 : Math.round(raw * 10) / 10;
-    }
-
-    // Place all gorillas on distinct rooftops
-    const spawnIndices = selectSpawnBuildings(buildings, this.players.length);
-    // Shuffle which player gets which building each round so matchups stay fresh
-    const shuffled = [...spawnIndices].sort(() => Math.random() - 0.5);
-
     this.players.forEach((p, idx) => {
-      const bIdx = shuffled[idx];
-      const b = buildings[bIdx];
+      const bIdx = roundSetup.spawnIndices[idx];
+      const b = this.terrain.buildings[bIdx];
       p.buildingIndex = bIdx;
       p.x = Math.round(b.x + b.width / 2);
       p.y = b.topY;
-      p.lastShot = null; // fresh skyline -> fresh ghost trail
+      p.lastShot = null;
       p.animation = 'idle';
       p.preferredDirection = this.pickDefaultDirectionFor(p);
     });
@@ -611,7 +775,20 @@ class GorillaPhysicsGame {
     return dir;
   }
 
-  private beginTurn(): void {
+  /**
+   * Starts a fresh turn for the active player (resetting their tries & step budget).
+   */
+  private beginPlayerTurn(): void {
+    this.triesRemaining = this.config.triesPerTurn;
+    this.movesRemaining = MAX_MOVES_PER_TURN;
+    this.turnEndedByHit = false;
+    this.prepareAimStep(true);
+  }
+
+  /**
+   * Prepares either the first try or a follow-up retry within the same player's turn.
+   */
+  private prepareAimStep(isFirstTry: boolean): void {
     const active = this.players[this.activePlayerIndex];
     if (!active) return;
 
@@ -625,30 +802,43 @@ class GorillaPhysicsGame {
       }
     }
 
-    // Load active player's saved aim preferences
     this.setAimDirection(active.preferredDirection);
     this.setAimAngle(active.preferredAngle);
     this.setAimSpeed(active.preferredSpeed);
 
     const planet = PLANETS[this.config.planetId];
+    const tryNum = this.config.triesPerTurn - this.triesRemaining + 1;
     this.roundBadge.textContent = `Round ${this.currentRound} / ${this.config.rounds}`;
     this.planetBadge.textContent = `${planet.name} · ${planet.gravity} m/s²`;
+    this.triesBadge.textContent = `Try ${tryNum} / ${this.config.triesPerTurn}`;
+    this.triesBadge.classList.toggle('hidden', this.config.triesPerTurn <= 1);
 
     this.turnDot.style.background = active.color;
     this.turnText.textContent = active.isBot
-      ? `${active.name} is calculating a parabolic arc...`
-      : `${active.name}'s turn — drag in sky or adjust angle & speed`;
+      ? `${active.name} is calculating try ${tryNum}...`
+      : isFirstTry
+        ? `${active.name}'s turn — move (A/D) or aim & throw`
+        : `${active.name} — adjust from your ghost trail & try again!`;
 
     this.setControlsEnabled(!active.isBot);
+    this.updateMoveUI();
     this.renderScoreboardStrip();
     this.updatePhysicsLabReadout();
 
+    if (this.showSolution) {
+      this.refreshVerifiedSolution();
+    } else {
+      this.verifiedSolution = null;
+    }
+
     if (active.isBot) {
-      this.botThinkTimer = 0.95;
+      this.botThinkTimer = isFirstTry ? 0.85 : 0.6;
     }
   }
 
   private setControlsEnabled(enabled: boolean): void {
+    this.btnMoveLeft.disabled = !enabled || this.movesRemaining <= 0;
+    this.btnMoveRight.disabled = !enabled || this.movesRemaining <= 0;
     this.btnDirLeft.disabled = !enabled;
     this.btnDirRight.disabled = !enabled;
     this.inputAngle.disabled = !enabled;
@@ -694,7 +884,7 @@ class GorillaPhysicsGame {
     }
   }
 
-  private showToast(msg: string, duration = 2.4): void {
+  private showToast(msg: string, duration = 2.2): void {
     this.toastBanner.textContent = msg;
     this.toastBanner.classList.remove('hidden');
     this.toastTimer = duration;
@@ -791,13 +981,12 @@ class GorillaPhysicsGame {
         b.maxApexMeters = altMeters;
       }
 
-      // Record trail smoothly
       const lastTrail = b.trail[b.trail.length - 1];
       if (!lastTrail || Math.hypot(b.x - lastTrail.x, b.y - lastTrail.y) >= 8) {
         b.trail.push({ x: b.x, y: b.y });
       }
 
-      // Check Sun Bonk! (classic QBasic Easter egg)
+      // Check Sun Bonk!
       if (!b.hitSun && Math.hypot(b.x - SUN_X, b.y - SUN_Y) <= SUN_RADIUS + BANANA_RADIUS) {
         b.hitSun = true;
         this.sunShocked = true;
@@ -828,7 +1017,7 @@ class GorillaPhysicsGame {
         return;
       }
 
-      // Check Out of Bounds (off sides, bottom, or too long in orbit)
+      // Out of Bounds
       if (
         b.x < -140 ||
         b.x > WORLD_WIDTH + 140 ||
@@ -873,13 +1062,15 @@ class GorillaPhysicsGame {
       );
     }
 
+    this.triesRemaining--;
+    const retryNote = this.triesRemaining > 0 ? ` (${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left!)` : '';
     this.showToast(
-      planet.id === 'moon' ? 'Banana floated into lunar orbit!' : 'Way over the skyline!',
-      2.0,
+      (planet.id === 'moon' ? 'Banana floated into lunar orbit!' : 'Way over the skyline!') + retryNote,
+      1.9,
     );
     this.updatePhysicsLabReadout();
     this.phase = 'exploding';
-    this.postShotTimer = 1.05;
+    this.postShotTimer = 0.85;
   }
 
   private resolveImpact(ix: number, iy: number, directTarget: Player | null): void {
@@ -890,6 +1081,7 @@ class GorillaPhysicsGame {
     const owner = this.players.find((p) => p.id === b.ownerId)!;
     const planet = PLANETS[this.config.planetId];
     const distanceMeters = Math.abs(ix - b.originX) / PIXELS_PER_METER;
+    const isFirstTryOfTurn = this.triesRemaining === this.config.triesPerTurn;
 
     owner.maxApexMeters = Math.max(owner.maxApexMeters, b.maxApexMeters);
 
@@ -906,12 +1098,12 @@ class GorillaPhysicsGame {
       }
     }
 
-    // Determine hit outcome
     let outcome: 'hit' | 'splash' | 'building' | 'self' = 'building';
 
     if (directTarget) {
       if (directTarget.id === owner.id) {
         outcome = 'self';
+        this.triesRemaining--;
         directTarget.animation = 'ouch';
         soundEngine.playBuildingHit(this.theme);
         this.spawnExplosionParticles(ix, iy, '#f97316', 36);
@@ -919,12 +1111,19 @@ class GorillaPhysicsGame {
         this.showToast(`Oops! ${owner.name} bonked themselves!`);
       } else {
         outcome = 'hit';
+        this.turnEndedByHit = true;
+        this.triesRemaining = 0;
         owner.hits++;
+
         let gained = SCORE_DIRECT_HIT;
-        let bonusText = '';
+        const bonuses: string[] = [];
+        if (this.config.triesPerTurn > 1 && isFirstTryOfTurn) {
+          gained += SCORE_FIRST_TRY_BONUS;
+          bonuses.push(`+${SCORE_FIRST_TRY_BONUS} First Try!`);
+        }
         if (distanceMeters >= LONG_SHOT_METERS) {
           gained += SCORE_LONG_SHOT_BONUS;
-          bonusText = ` +${SCORE_LONG_SHOT_BONUS} Long Shot!`;
+          bonuses.push(`+${SCORE_LONG_SHOT_BONUS} Long Shot!`);
         }
         owner.score += gained;
         owner.animation = 'celebrate';
@@ -935,10 +1134,11 @@ class GorillaPhysicsGame {
         this.triggerShake(10, 0.45);
         this.spawnExplosionParticles(ix, iy, '#fde047', 54);
         this.spawnFloatingText(ix, iy - 34, `DIRECT HIT! +${gained}`, '#fde047', 1.3);
-        this.showToast(`${owner.name} hit ${directTarget.name}! +${gained} pts${bonusText}`, 2.4);
+        const bonusStr = bonuses.length > 0 ? ` (${bonuses.join(' ')})` : '';
+        this.showToast(`${owner.name} hit ${directTarget.name}! +${gained} pts${bonusStr}`, 2.4);
       }
     } else {
-      // Check splash damage on opponents
+      this.triesRemaining--;
       let splashedPlayer: Player | null = null;
       for (const p of this.players) {
         if (p.id === owner.id) continue;
@@ -958,11 +1158,18 @@ class GorillaPhysicsGame {
         this.triggerShake(7, 0.32);
         this.spawnExplosionParticles(ix, iy, '#fb923c', 38);
         this.spawnFloatingText(ix, iy - 26, `CLOSE CALL! +${SCORE_SPLASH_HIT}`, '#fed7aa', 1.15);
-        this.showToast(`Close splash near ${splashedPlayer.name}! +${SCORE_SPLASH_HIT} pts`, 2.2);
+        const retryNote = this.triesRemaining > 0 ? ` — ${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left to dial it in!` : '';
+        this.showToast(`Close splash near ${splashedPlayer.name}! +${SCORE_SPLASH_HIT} pts${retryNote}`, 2.2);
       } else {
         soundEngine.playBuildingHit(this.theme);
         this.triggerShake(5, 0.24);
         this.spawnExplosionParticles(ix, iy, '#f97316', 28);
+        if (this.triesRemaining > 0 && !owner.isBot) {
+          this.showToast(
+            `Building blasted! ${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left — adjust using your ghost trail.`,
+            1.8,
+          );
+        }
       }
     }
 
@@ -991,12 +1198,13 @@ class GorillaPhysicsGame {
     this.renderScoreboardStrip();
     this.updatePhysicsLabReadout();
     this.phase = 'exploding';
-    this.postShotTimer = outcome === 'hit' ? 1.55 : 0.95;
+    this.postShotTimer = outcome === 'hit' ? 1.5 : 0.8;
   }
 
   private respawnHitGorillas(): void {
     if (this.pendingRespawnIds.length === 0) return;
 
+    const planet = PLANETS[this.config.planetId];
     const occupied = new Set(
       this.players
         .filter((p) => !this.pendingRespawnIds.includes(p.id))
@@ -1006,13 +1214,38 @@ class GorillaPhysicsGame {
     for (const id of this.pendingRespawnIds) {
       const p = this.players.find((pl) => pl.id === id);
       if (!p) continue;
+
+      const others = this.players.filter((o) => o.id !== p.id);
       const candidates = this.terrain.buildings
         .map((_, idx) => idx)
-        .filter((idx) => !occupied.has(idx) && idx !== p.buildingIndex);
-      const chosenIdx =
-        candidates.length > 0
-          ? candidates[Math.floor(Math.random() * candidates.length)]
-          : p.buildingIndex;
+        .filter((idx) => !occupied.has(idx) && idx !== p.buildingIndex)
+        .sort(() => Math.random() - 0.5);
+
+      // Prefer a rooftop that has a verified unobstructed shot to an opponent
+      let chosenIdx = candidates[0] ?? p.buildingIndex;
+      for (const idx of candidates) {
+        const b = this.terrain.buildings[idx];
+        const rx = Math.round(b.x + b.width / 2);
+        const ry = this.terrain.getSurfaceY(rx, Math.max(0, b.topY - 4));
+        if (ry >= WORLD_HEIGHT - 20) continue;
+        const origin = { x: rx, y: ry - GORILLA_HAND_OFFSET_Y };
+        const hasShot = others.some((o) =>
+          Boolean(
+            findVerifiedSolution(
+              origin,
+              { x: o.x, y: o.y - 22 },
+              planet.gravity,
+              this.windAccel,
+              (x, y) => this.terrain.isSolid(x, y),
+            ),
+          ),
+        );
+        if (hasShot) {
+          chosenIdx = idx;
+          break;
+        }
+      }
+
       const b = this.terrain.buildings[chosenIdx];
       p.buildingIndex = chosenIdx;
       p.x = Math.round(b.x + b.width / 2);
@@ -1026,7 +1259,13 @@ class GorillaPhysicsGame {
     this.pendingRespawnIds = [];
   }
 
-  private advanceTurn(): void {
+  private afterShotComplete(): void {
+    // If the active player still has tries left and didn't already score a direct hit, stay on their turn!
+    if (!this.turnEndedByHit && this.triesRemaining > 0) {
+      this.prepareAimStep(false);
+      return;
+    }
+
     this.respawnHitGorillas();
     this.turnsTakenInRound++;
     this.activePlayerIndex = (this.activePlayerIndex + 1) % this.players.length;
@@ -1039,10 +1278,10 @@ class GorillaPhysicsGame {
         return;
       }
       this.setupRoundSkyline();
-      this.showToast(`Round ${this.currentRound} — New skyline & fresh wind!`, 2.4);
+      this.showToast(`Round ${this.currentRound} — New solvable skyline & fresh wind!`, 2.4);
     }
 
-    this.beginTurn();
+    this.beginPlayerTurn();
   }
 
   private finishMatch(): void {
@@ -1149,7 +1388,6 @@ class GorillaPhysicsGame {
   private update(dt: number): void {
     this.timeSec += dt;
 
-    // Drift clouds & wind wisps
     const windSpeedPx = this.windAccel * 24;
     for (const c of this.clouds) {
       c.x += (windSpeedPx * c.speedFactor + (Math.abs(this.windAccel) < 0.2 ? 6 : 0)) * dt;
@@ -1163,7 +1401,6 @@ class GorillaPhysicsGame {
       if (w.x < -60) w.x = WORLD_WIDTH + 60;
     }
 
-    // Toast timer
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;
       if (this.toastTimer <= 0) {
@@ -1171,12 +1408,10 @@ class GorillaPhysicsGame {
       }
     }
 
-    // Screen shake decay
     if (this.shakeTimer > 0) {
       this.shakeTimer = Math.max(0, this.shakeTimer - dt);
     }
 
-    // Particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const pt = this.particles[i];
       pt.life -= dt;
@@ -1190,7 +1425,6 @@ class GorillaPhysicsGame {
       pt.rotation += pt.vRot * dt;
     }
 
-    // Floating texts
     for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
       const ft = this.floatingTexts[i];
       ft.life -= dt;
@@ -1201,7 +1435,6 @@ class GorillaPhysicsGame {
       ft.y += ft.vy * dt;
     }
 
-    // Phase-specific logic
     if (this.phase === 'aiming') {
       const active = this.players[this.activePlayerIndex];
       if (active?.isBot) {
@@ -1215,7 +1448,7 @@ class GorillaPhysicsGame {
     } else if (this.phase === 'exploding') {
       this.postShotTimer -= dt;
       if (this.postShotTimer <= 0) {
-        this.advanceTurn();
+        this.afterShotComplete();
       }
     }
   }
@@ -1246,6 +1479,8 @@ class GorillaPhysicsGame {
       aimDirection: this.aimDirection,
       showAimHint: this.showAimHint,
       showPhysicsLab: this.showPhysicsLab,
+      showSolution: this.showSolution,
+      verifiedSolution: this.verifiedSolution,
       showAimingGuides: this.phase === 'aiming',
       banana: this.banana,
       sunShocked: this.sunShocked,
