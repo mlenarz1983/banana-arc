@@ -161,9 +161,19 @@ export interface Award {
   valueLabel: string;
 }
 
+export interface VerifiedSolution {
+  angleDeg: number;
+  speed: number;
+  direction: ThrowDirection;
+  flightTime: number;
+  targetPlayerId?: number;
+  points: Vec2[];
+}
+
 export interface GameConfig {
   humanCount: number; // 1..4 (when 1, Robo-Kong joins as Player 2)
   rounds: number;
+  triesPerTurn: number; // 1, 3, or 4
   planetId: PlanetId;
   botDifficulty: BotDifficulty;
   playerNames: string[];

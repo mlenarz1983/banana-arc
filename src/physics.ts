@@ -1,5 +1,8 @@
 import {
+  BANANA_RADIUS,
+  GORILLA_HIT_RADIUS,
   MAX_ANGLE,
+  MAX_FLIGHT_SEC,
   MAX_SPEED,
   MIN_ANGLE,
   MIN_SPEED,
@@ -14,6 +17,7 @@ import type {
   Player,
   ThrowDirection,
   Vec2,
+  VerifiedSolution,
 } from './types';
 
 export function degToRad(deg: number): number {
@@ -100,6 +104,140 @@ export function theoreticalFlatRange(
   return (speed * speed * Math.sin(2 * rad)) / gravity;
 }
 
+/**
+ * Simulates an exact (angleDeg, speed, direction) launch with fine sub-steps to verify
+ * whether it hits the target hitbox cleanly without colliding with any solid building pixel.
+ */
+export function simulateVerifiedShot(
+  origin: Vec2,
+  target: Vec2,
+  angleDeg: number,
+  speed: number,
+  direction: ThrowDirection,
+  gravity: number,
+  windAccel: number,
+  isSolidPixel: (x: number, y: number) => boolean,
+  hitRadius = GORILLA_HIT_RADIUS + BANANA_RADIUS - 3,
+): { hit: boolean; flightTime: number; points: Vec2[] } {
+  const { vx, vy } = computeVelocityComponents(angleDeg, speed, direction);
+  const dt = 0.012;
+  const points: Vec2[] = [{ x: origin.x, y: origin.y }];
+  let lastRecorded = points[0];
+
+  for (let t = dt; t <= MAX_FLIGHT_SEC; t += dt) {
+    const pt = evaluateProjectilePosition(origin, vx, vy, gravity, windAccel, t);
+
+    if (Math.hypot(pt.x - lastRecorded.x, pt.y - lastRecorded.y) >= 8) {
+      points.push(pt);
+      lastRecorded = pt;
+    }
+
+    // Check target hit first (matches game simulation order)
+    if (t >= 0.12 && Math.hypot(pt.x - target.x, pt.y - target.y) <= hitRadius) {
+      points.push(pt);
+      return { hit: true, flightTime: t, points };
+    }
+
+    // Check building collision (allow tiny launch grace right near gorilla's hand)
+    if (t >= 0.04 && pt.y >= 0 && isSolidPixel(pt.x, pt.y)) {
+      return { hit: false, flightTime: t, points };
+    }
+
+    // Out of bounds
+    if (pt.x < -120 || pt.x > WORLD_WIDTH + 120 || pt.y > WORLD_HEIGHT + 20) {
+      return { hit: false, flightTime: t, points };
+    }
+  }
+
+  return { hit: false, flightTime: MAX_FLIGHT_SEC, points };
+}
+
+/**
+ * Searches for a verified unobstructed integer (angleDeg, speed, direction) launch
+ * that hits `target` from `origin` under the given gravity and wind.
+ * Returns null if no unobstructed integer solution exists.
+ */
+export function findVerifiedSolution(
+  origin: Vec2,
+  target: Vec2,
+  gravity: number,
+  windAccel: number,
+  isSolidPixel: (x: number, y: number) => boolean,
+): VerifiedSolution | null {
+  const dxMeters = (target.x - origin.x) / PIXELS_PER_METER;
+  const dyMeters = (origin.y - target.y) / PIXELS_PER_METER; // upward positive
+
+  const maxT = gravity < 3 ? 14.5 : gravity < 6 ? 10.5 : 8.0;
+  const tried = new Set<string>();
+
+  interface ScoredCandidate {
+    angleDeg: number;
+    speed: number;
+    direction: ThrowDirection;
+    prefScore: number;
+  }
+
+  const candidates: ScoredCandidate[] = [];
+
+  for (let i = 0; i <= 120; i++) {
+    const T = 0.65 + (i / 120) * (maxT - 0.65);
+    const vx = (dxMeters - 0.5 * windAccel * T * T) / T;
+    const vy = (dyMeters + 0.5 * gravity * T * T) / T;
+    if (vy <= 1) continue;
+
+    const rawSpeed = Math.hypot(vx, vy);
+    if (rawSpeed < MIN_SPEED || rawSpeed > MAX_SPEED) continue;
+
+    const direction: ThrowDirection = vx >= 0 ? 1 : -1;
+    const rawAngle = radToDeg(Math.atan2(vy, Math.abs(vx)));
+    if (rawAngle < MIN_ANGLE || rawAngle > MAX_ANGLE) continue;
+
+    // Test nearest integer pairs around the analytical solution
+    const baseA = Math.round(rawAngle);
+    const baseS = Math.round(rawSpeed);
+
+    for (const da of [0, 1, -1]) {
+      for (const ds of [0, 1, -1]) {
+        const a = clamp(baseA + da, MIN_ANGLE, MAX_ANGLE);
+        const s = clamp(baseS + ds, MIN_SPEED, MAX_SPEED);
+        const key = `${direction}:${a}:${s}`;
+        if (tried.has(key)) continue;
+        tried.add(key);
+
+        // Prefer natural playable arcs (around 42-62 degrees, moderate speed)
+        const prefScore = Math.abs(a - 50) * 0.45 + s * 0.12 + (Math.abs(da) + Math.abs(ds)) * 2;
+        candidates.push({ angleDeg: a, speed: s, direction, prefScore });
+      }
+    }
+  }
+
+  candidates.sort((a, b) => a.prefScore - b.prefScore);
+
+  for (const cand of candidates) {
+    const sim = simulateVerifiedShot(
+      origin,
+      target,
+      cand.angleDeg,
+      cand.speed,
+      cand.direction,
+      gravity,
+      windAccel,
+      isSolidPixel,
+    );
+    if (sim.hit) {
+      return {
+        angleDeg: cand.angleDeg,
+        speed: cand.speed,
+        direction: cand.direction,
+        flightTime: sim.flightTime,
+        points: sim.points,
+      };
+    }
+  }
+
+  return null;
+}
+
 export interface BotSolution {
   angleDeg: number;
   speed: number;
@@ -119,93 +257,32 @@ export function solveBotShot(
   isSolidPixel: (x: number, y: number) => boolean,
   rng: () => number = Math.random,
 ): BotSolution {
+  const verified = findVerifiedSolution(origin, target, gravity, windAccel, isSolidPixel);
+
   const dxMeters = (target.x - origin.x) / PIXELS_PER_METER;
-  const dyMeters = (origin.y - target.y) / PIXELS_PER_METER; // upward positive
   const defaultDir: ThrowDirection = dxMeters >= 0 ? 1 : -1;
 
-  interface Candidate {
-    angleDeg: number;
-    speed: number;
-    direction: ThrowDirection;
-    clear: boolean;
-    score: number;
-  }
-
-  const candidates: Candidate[] = [];
-  const maxT = gravity < 3 ? 13 : gravity < 6 ? 9.5 : 7.5;
-
-  for (let i = 0; i <= 75; i++) {
-    const T = 0.7 + (i / 75) * (maxT - 0.7);
-    const vx = (dxMeters - 0.5 * windAccel * T * T) / T;
-    const vy = (dyMeters + 0.5 * gravity * T * T) / T;
-
-    if (vy <= 1) continue;
-    const speed = Math.hypot(vx, vy);
-    if (speed < MIN_SPEED || speed > MAX_SPEED) continue;
-
-    const direction: ThrowDirection = vx >= 0 ? 1 : -1;
-    const angleDeg = radToDeg(Math.atan2(vy, Math.abs(vx)));
-    if (angleDeg < MIN_ANGLE + 4 || angleDeg > MAX_ANGLE - 3) continue;
-
-    // Check clearance along the arc (ignoring very start & very end near gorillas)
-    let clear = true;
-    const steps = Math.max(24, Math.ceil(T * 45));
-    for (let s = 2; s < steps - 2; s++) {
-      const t = (s / steps) * T;
-      const pt = evaluateProjectilePosition(origin, vx, vy, gravity, windAccel, t);
-      if (pt.x < -80 || pt.x > WORLD_WIDTH + 80 || pt.y > WORLD_HEIGHT) {
-        clear = false;
-        break;
+  const best: BotSolution = verified
+    ? {
+        angleDeg: verified.angleDeg,
+        speed: verified.speed,
+        direction: verified.direction,
       }
-      if (pt.y >= 0 && isSolidPixel(pt.x, pt.y)) {
-        clear = false;
-        break;
-      }
-    }
-
-    // Prefer natural arcs around 40-65 degrees with moderate speed
-    const anglePenalty = Math.abs(angleDeg - 52) * 0.4;
-    const speedPenalty = speed * 0.15;
-    candidates.push({
-      angleDeg,
-      speed,
-      direction,
-      clear,
-      score: (clear ? 0 : 1000) + anglePenalty + speedPenalty,
-    });
-  }
-
-  candidates.sort((a, b) => a.score - b.score);
-
-  let best: BotSolution;
-  if (candidates.length > 0) {
-    // Pick among the top 3 clean arcs for variety
-    const clearPool = candidates.filter((c) => c.clear);
-    const pool = clearPool.length > 0 ? clearPool.slice(0, 4) : candidates.slice(0, 3);
-    const chosen = pool[Math.floor(rng() * pool.length)];
-    best = {
-      angleDeg: chosen.angleDeg,
-      speed: chosen.speed,
-      direction: chosen.direction,
-    };
-  } else {
-    best = {
-      angleDeg: 52,
-      speed: clamp(Math.sqrt(Math.abs(dxMeters) * gravity), MIN_SPEED, MAX_SPEED),
-      direction: defaultDir,
-    };
-  }
+    : {
+        angleDeg: 52,
+        speed: clamp(Math.sqrt(Math.abs(dxMeters) * gravity), MIN_SPEED, MAX_SPEED),
+        direction: defaultDir,
+      };
 
   // Apply human-like imperfection based on difficulty
   const spread =
     difficulty === 'easy'
-      ? { angle: 7.5, speed: 7.5 }
+      ? { angle: 7.0, speed: 7.0 }
       : difficulty === 'normal'
-        ? { angle: 3.2, speed: 3.4 }
-        : { angle: 1.0, speed: 1.2 };
+        ? { angle: 3.0, speed: 3.2 }
+        : { angle: 0.9, speed: 1.0 };
 
-  // Triangular distribution centered on 0 (feels more natural than uniform noise)
-  const tri = () => (rng() + rng() - 1);
+  const tri = () => rng() + rng() - 1;
 
   return {
     angleDeg: Math.round(clamp(best.angleDeg + tri() * spread.angle, MIN_ANGLE, MAX_ANGLE)),

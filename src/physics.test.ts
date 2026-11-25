@@ -1,13 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { PIXELS_PER_METER, PLANETS, WORLD_HEIGHT, WORLD_WIDTH } from './constants';
+import {
+  GORILLA_HAND_OFFSET_Y,
+  PIXELS_PER_METER,
+  PLANETS,
+  PLANET_ORDER,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from './constants';
 import {
   computeAwards,
   computeVelocityComponents,
   evaluateProjectilePosition,
+  findVerifiedSolution,
   solveBotShot,
   theoreticalFlatRange,
 } from './physics';
-import { generateSkyline, selectSpawnBuildings, SkylineTerrain } from './skyline';
+import {
+  generateSkyline,
+  generateSolvableRound,
+  selectSpawnBuildings,
+  SkylineTerrain,
+  tryMoveGorilla,
+} from './skyline';
 import type { Building, Player } from './types';
 
 describe('Projectile physics', () => {
@@ -50,7 +64,7 @@ describe('Projectile physics', () => {
   });
 });
 
-describe('Bot ballistic solver', () => {
+describe('Bot ballistic solver & level solvability', () => {
   it('solves an unobstructed shot that lands near the target with wind and gravity', () => {
     const origin = { x: 150, y: 460 };
     const target = { x: 960, y: 420 };
@@ -100,6 +114,105 @@ describe('Bot ballistic solver', () => {
 
     expect(hitWall).toBe(false);
     expect(minDist).toBeLessThan(28); // within gorilla hit radius
+  });
+
+  it('guarantees every generated round is solvable across all 4 planets and 2-4 players', () => {
+    for (const planetId of PLANET_ORDER) {
+      const planet = PLANETS[planetId];
+      for (const count of [2, 3, 4]) {
+        for (let seed = 1; seed <= 4; seed++) {
+          const round = generateSolvableRound(
+            count,
+            planet.gravity,
+            planetId !== 'moon',
+            seed * 1337 + count * 17,
+          );
+          const positions = round.spawnIndices.map((idx) => {
+            const b = round.terrain.buildings[idx];
+            return { x: Math.round(b.x + b.width / 2), y: b.topY };
+          });
+
+          for (let i = 0; i < positions.length; i++) {
+            const origin = { x: positions[i].x, y: positions[i].y - GORILLA_HAND_OFFSET_Y };
+            let found = false;
+            for (let j = 0; j < positions.length; j++) {
+              if (i === j) continue;
+              const target = { x: positions[j].x, y: positions[j].y - 22 };
+              const sol = findVerifiedSolution(
+                origin,
+                target,
+                planet.gravity,
+                round.windAccel,
+                (x, y) => round.terrain.isSolid(x, y),
+              );
+              if (sol) {
+                found = true;
+                break;
+              }
+            }
+            expect(found).toBe(true);
+          }
+        }
+      }
+    }
+  });
+});
+
+describe('Gorilla rooftop movement (downhill only)', () => {
+  it('allows walking across rooftops and dropping down, but blocks climbing taller walls', () => {
+    const buildings: Building[] = [
+      {
+        x: 0,
+        width: 100,
+        height: 300,
+        topY: WORLD_HEIGHT - 300, // taller left neighbor (y=380)
+        colorIndex: 0,
+        windowCols: 3,
+        windowRows: 10,
+        windowSeed: 1,
+        roofStyle: 'flat',
+      },
+      {
+        x: 100,
+        width: 100,
+        height: 200,
+        topY: WORLD_HEIGHT - 200, // middle starting roof (y=480)
+        colorIndex: 1,
+        windowCols: 3,
+        windowRows: 7,
+        windowSeed: 2,
+        roofStyle: 'flat',
+      },
+      {
+        x: 200,
+        width: 100,
+        height: 120,
+        topY: WORLD_HEIGHT - 120, // lower right neighbor (y=560)
+        colorIndex: 2,
+        windowCols: 3,
+        windowRows: 4,
+        windowSeed: 3,
+        roofStyle: 'flat',
+      },
+    ];
+    const terrain = new SkylineTerrain(buildings);
+
+    // Start near left edge of middle building (x=105, y=480); trying to move left into tall wall should stop before x=100
+    const climbAttempt = tryMoveGorilla(terrain, 105, WORLD_HEIGHT - 200, -20, []);
+    expect(climbAttempt.x).toBeGreaterThanOrEqual(100);
+    expect(climbAttempt.y).toBe(WORLD_HEIGHT - 200);
+
+    // From x=100 directly against the taller left wall, moving left is completely blocked
+    const blockedWall = tryMoveGorilla(terrain, 100, WORLD_HEIGHT - 200, -18, []);
+    expect(blockedWall.moved).toBe(false);
+    expect(blockedWall.reason).toBe('wall');
+
+    // Start near right edge of middle building (x=195, y=480); moving right drops down onto lower building (y=560)
+    const dropRight = tryMoveGorilla(terrain, 195, WORLD_HEIGHT - 200, 18, []);
+    expect(dropRight.moved).toBe(true);
+    expect(dropRight.dropped).toBe(true);
+    expect(dropRight.x).toBe(213);
+    expect(dropRight.y).toBe(WORLD_HEIGHT - 120);
   });
 });
 

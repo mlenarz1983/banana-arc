@@ -28,7 +28,12 @@ export const SCORE_DIRECT_HIT = 100;
 export const SCORE_SPLASH_HIT = 40;
 export const SCORE_SUN_BONK = 15;
 export const SCORE_LONG_SHOT_BONUS = 25;
+export const SCORE_FIRST_TRY_BONUS = 25;
 export const LONG_SHOT_METERS = 95;
+
+export const MOVE_STEP_PX = 18;
+export const MAX_MOVES_PER_TURN = 8;
+export const MAX_CLIMB_PX = 3;
 
 export const PLANETS: Record<PlanetId, PlanetPreset> = {
   earth: {

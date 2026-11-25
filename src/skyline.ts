@@ -1,5 +1,11 @@
-import { WORLD_HEIGHT, WORLD_WIDTH } from './constants';
-import type { Building, Crater } from './types';
+import {
+  GORILLA_HAND_OFFSET_Y,
+  MAX_CLIMB_PX,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from './constants';
+import { findVerifiedSolution } from './physics';
+import type { Building, Crater, Vec2 } from './types';
 
 function createRng(seed: number): () => number {
   let s = seed >>> 0;
@@ -18,6 +24,7 @@ export function generateSkyline(
   width = WORLD_WIDTH,
   height = WORLD_HEIGHT,
   seed = Date.now(),
+  maxHeightCap = 365,
 ): Building[] {
   const rng = createRng(seed);
   const buildings: Building[] = [];
@@ -41,30 +48,31 @@ export function generateSkyline(
 
     const t = i / (targetCount - 1); // 0..1 across screen
     let minH = 140;
-    let maxH = 340;
+    let maxH = Math.min(340, maxHeightCap);
 
     if (profile === 0) {
       // Taller in the middle (classic Gorillas arch challenge)
-      const centerBoost = Math.sin(t * Math.PI) * 110;
-      minH = 130 + centerBoost * 0.55;
-      maxH = 265 + centerBoost;
+      const centerBoost = Math.sin(t * Math.PI) * 105;
+      minH = 130 + centerBoost * 0.5;
+      maxH = Math.min(maxHeightCap, 260 + centerBoost);
     } else if (profile === 1) {
       // Stepped valley
-      const edgeBoost = Math.abs(t - 0.5) * 140;
+      const edgeBoost = Math.abs(t - 0.5) * 135;
       minH = 135 + edgeBoost * 0.4;
-      maxH = 260 + edgeBoost;
+      maxH = Math.min(maxHeightCap, 255 + edgeBoost);
     } else {
       // Varied skyline
       minH = 135;
-      maxH = 360;
+      maxH = Math.min(maxHeightCap, 350);
     }
 
     // Keep outer edge buildings slightly below extreme height so spawns feel open
     if (i === 0 || i === targetCount - 1) {
-      maxH = Math.min(maxH, 290);
+      maxH = Math.min(maxH, 285);
     }
 
-    const bHeight = Math.round(minH + rng() * (maxH - minH));
+    const effectiveMin = Math.min(minH, maxH - 20);
+    const bHeight = Math.round(effectiveMin + rng() * Math.max(1, maxH - effectiveMin));
     const topY = height - bHeight;
 
     const windowCols = Math.max(2, Math.floor((clampedWidth - 18) / 18));
@@ -216,4 +224,199 @@ export class SkylineTerrain {
     }
     return this.height;
   }
+
+  /**
+   * Finds the building index covering horizontal coordinate x.
+   */
+  getBuildingIndexAt(x: number): number {
+    for (let i = 0; i < this.buildings.length; i++) {
+      const b = this.buildings[i];
+      if (x >= b.x && x < b.x + b.width) {
+        return i;
+      }
+    }
+    return Math.max(0, Math.min(this.buildings.length - 1, x < 0 ? 0 : this.buildings.length - 1));
+  }
 }
+
+export interface SolvableRoundSetup {
+  terrain: SkylineTerrain;
+  spawnIndices: number[];
+  windAccel: number;
+}
+
+/**
+ * Generates a skyline, spawn positions, and wind acceleration, verifying BEFORE returning
+ * that every spawned gorilla has at least one unobstructed integer ballistic solution to an opponent.
+ */
+export function generateSolvableRound(
+  playerCount: number,
+  gravity: number,
+  allowWind: boolean,
+  baseSeed = Date.now(),
+): SolvableRoundSetup {
+  const maxAttempts = 30;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const attemptSeed = (baseSeed + attempt * 7919) >>> 0;
+    const rng = createRng(attemptSeed);
+
+    // Gradually relax max building height & wind if earlier rolls were too extreme
+    const heightCap = attempt < 12 ? 360 : attempt < 22 ? 285 : 225;
+    const windScale = attempt < 15 ? 3.2 : attempt < 24 ? 1.8 : 0;
+
+    const buildings = generateSkyline(WORLD_WIDTH, WORLD_HEIGHT, attemptSeed, heightCap);
+    const terrain = new SkylineTerrain(buildings);
+
+    let windAccel = 0;
+    if (allowWind && windScale > 0) {
+      const raw = (rng() * 2 - 1) * windScale;
+      windAccel = Math.abs(raw) < 0.35 ? 0 : Math.round(raw * 10) / 10;
+    }
+
+    const baseSpawns = selectSpawnBuildings(buildings, playerCount, rng);
+    // Shuffle spawns deterministically using rng
+    const spawnIndices = [...baseSpawns];
+    for (let i = spawnIndices.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [spawnIndices[i], spawnIndices[j]] = [spawnIndices[j], spawnIndices[i]];
+    }
+
+    const positions = spawnIndices.map((bIdx) => {
+      const b = buildings[bIdx];
+      return {
+        x: Math.round(b.x + b.width / 2),
+        y: b.topY,
+      };
+    });
+
+    // Verify that EVERY gorilla has a verified unobstructed integer shot to at least one opponent
+    let allSolvable = true;
+    for (let i = 0; i < positions.length; i++) {
+      const origin: Vec2 = { x: positions[i].x, y: positions[i].y - GORILLA_HAND_OFFSET_Y };
+      let hasAnyTarget = false;
+      for (let j = 0; j < positions.length; j++) {
+        if (i === j) continue;
+        const target: Vec2 = { x: positions[j].x, y: positions[j].y - 22 };
+        const sol = findVerifiedSolution(
+          origin,
+          target,
+          gravity,
+          windAccel,
+          (x, y) => terrain.isSolid(x, y),
+        );
+        if (sol) {
+          hasAnyTarget = true;
+          break;
+        }
+      }
+      if (!hasAnyTarget) {
+        allSolvable = false;
+        break;
+      }
+    }
+
+    if (allSolvable) {
+      return { terrain, spawnIndices, windAccel };
+    }
+  }
+
+  // Deterministic guaranteed-solvable fallback (flat moderate rooftops, zero wind)
+  const fallbackBuildings = generateSkyline(WORLD_WIDTH, WORLD_HEIGHT, baseSeed, 200);
+  const terrain = new SkylineTerrain(fallbackBuildings);
+  const spawnIndices = selectSpawnBuildings(fallbackBuildings, playerCount, () => 0.25);
+  return { terrain, spawnIndices, windAccel: 0 };
+}
+
+export interface MoveResult {
+  moved: boolean;
+  x: number;
+  y: number;
+  dropped: boolean;
+  reason?: 'wall' | 'edge' | 'occupied' | 'pit';
+}
+
+/**
+ * Moves a gorilla horizontally by `deltaX` pixels under the downhill-only rule:
+ * - Cannot climb up a building wall (blocked if solid terrain rises > MAX_CLIMB_PX above feet)
+ * - Can walk freely across flat rooftops and drop down onto lower roofs or crater floors
+ * - Cannot walk off screen edges, into another gorilla, or into a bottomless pit
+ */
+export function tryMoveGorilla(
+  terrain: SkylineTerrain,
+  currentX: number,
+  currentY: number,
+  deltaX: number,
+  otherGorillas: Vec2[],
+): MoveResult {
+  const dir = Math.sign(deltaX);
+  const steps = Math.abs(Math.round(deltaX));
+  if (dir === 0 || steps === 0) {
+    return { moved: false, x: currentX, y: currentY, dropped: false };
+  }
+
+  let x = currentX;
+  let y = currentY;
+  let movedAny = false;
+  let droppedAny = false;
+  let blockReason: MoveResult['reason'];
+
+  for (let s = 0; s < steps; s++) {
+    const nextX = x + dir;
+
+    if (nextX < 24 || nextX > terrain.width - 24) {
+      blockReason = 'edge';
+      break;
+    }
+
+    // Prevent stepping onto another gorilla
+    let blockedByGorilla = false;
+    for (const other of otherGorillas) {
+      if (Math.abs(nextX - other.x) < 34 && Math.abs(y - other.y) < 40) {
+        blockedByGorilla = true;
+        break;
+      }
+    }
+    if (blockedByGorilla) {
+      blockReason = 'occupied';
+      break;
+    }
+
+    // Check if there is a wall rising higher than MAX_CLIMB_PX above our feet (no climbing!)
+    let hitWall = false;
+    for (let checkY = y - MAX_CLIMB_PX - 1; checkY >= Math.max(0, y - 34); checkY -= 2) {
+      if (terrain.isSolid(nextX, checkY)) {
+        hitWall = true;
+        break;
+      }
+    }
+    if (hitWall) {
+      blockReason = 'wall';
+      break;
+    }
+
+    // Find ground directly at or below feet (allowing up to MAX_CLIMB_PX smoothness for tiny crater edges)
+    const groundY = terrain.getSurfaceY(nextX, Math.max(0, y - MAX_CLIMB_PX));
+    if (groundY >= terrain.height - 4) {
+      blockReason = 'pit';
+      break;
+    }
+
+    if (groundY > y + 6) {
+      droppedAny = true;
+    }
+
+    x = nextX;
+    y = groundY;
+    movedAny = true;
+  }
+
+  return {
+    moved: movedAny,
+    x,
+    y,
+    dropped: droppedAny,
+    reason: movedAny ? undefined : blockReason,
+  };
+}
+
