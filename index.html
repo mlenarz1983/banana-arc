@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en" data-theme="modern">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Banana Arc — Gorilla Projectile Physics Game</title>
+    <meta
+      name="description"
+      content="A 1–4 player tribute to QBasic Gorillas built for kids and families to play together while exploring projectile physics, gravity, and wind."
+    />
+    <script type="module" crossorigin src="./assets/index-DwE5W_n3.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index--a7qH0Lk.css">
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <header class="top-bar">
+        <div class="brand-group">
+          <h1 class="brand-title">Banana Arc</h1>
+          <span id="round-badge" class="status-chip">Round 1 / 5</span>
+          <span id="planet-badge" class="status-chip status-chip--planet">Earth · 9.8 m/s²</span>
+        </div>
+
+        <nav class="toolbar" aria-label="Game options">
+          <button id="btn-theme" class="tool-btn" type="button" title="Switch between Modern and Retro '90s visuals">
+            Theme: Modern
+          </button>
+          <button id="btn-hint" class="tool-btn" type="button" aria-pressed="false" title="Show short aiming arc preview">
+            Aim Hint: Off
+          </button>
+          <button id="btn-solution" class="tool-btn" type="button" aria-pressed="false" title="Show a verified winning trajectory and exact settings">
+            Solution: Off
+          </button>
+          <button id="btn-lab" class="tool-btn" type="button" aria-pressed="true" title="Show Vx/Vy vectors and Physics Lab stats">
+            Physics Lab: On
+          </button>
+          <button id="btn-sound" class="tool-btn" type="button" aria-pressed="true" title="Toggle sound effects">
+            Sound: On
+          </button>
+          <button id="btn-new-game" class="tool-btn tool-btn--accent" type="button">
+            Setup
+          </button>
+        </nav>
+      </header>
+
+      <main class="stage-wrap">
+        <div class="canvas-frame">
+          <canvas
+            id="game-canvas"
+            width="1200"
+            height="680"
+            aria-label="Banana Arc game skyline"
+          ></canvas>
+
+          <div id="turn-banner" class="hud-banner" aria-live="polite">
+            <span id="turn-dot" class="turn-dot"></span>
+            <span id="turn-text">Get ready to throw!</span>
+            <span id="tries-badge" class="tries-badge">Try 1 / 3</span>
+          </div>
+
+          <div id="scoreboard-strip" class="hud-scores" aria-label="Scoreboard"></div>
+
+          <div id="toast-banner" class="toast-banner hidden" aria-live="polite"></div>
+        </div>
+
+        <section id="controls-dock" class="controls-dock" aria-label="Throw and movement controls">
+          <div class="control-group control-group--move">
+            <span id="move-label" class="control-label">Move (8 left)</span>
+            <div class="dir-toggle" role="group" aria-label="Move gorilla left or right">
+              <button id="btn-move-left" class="dir-btn" type="button" title="Walk left (A key) — can drop down, can't climb up">← Step</button>
+              <button id="btn-move-right" class="dir-btn" type="button" title="Walk right (D key) — can drop down, can't climb up">Step →</button>
+            </div>
+          </div>
+
+          <div class="control-group control-group--dir">
+            <span class="control-label">Aim Side</span>
+            <div class="dir-toggle" role="group" aria-label="Throw direction">
+              <button id="btn-dir-left" class="dir-btn" type="button">← Left</button>
+              <button id="btn-dir-right" class="dir-btn active" type="button">Right →</button>
+            </div>
+          </div>
+
+          <div class="control-group control-group--slider">
+            <div class="slider-header">
+              <label for="input-angle" class="control-label">Angle</label>
+              <div class="num-wrap">
+                <input id="input-angle-num" type="number" min="5" max="88" value="45" aria-label="Launch angle in degrees" />
+                <span class="unit">°</span>
+              </div>
+            </div>
+            <input id="input-angle" type="range" min="5" max="88" value="45" />
+          </div>
+
+          <div class="control-group control-group--slider">
+            <div class="slider-header">
+              <label for="input-speed" class="control-label">Speed</label>
+              <div class="num-wrap">
+                <input id="input-speed-num" type="number" min="8" max="95" value="40" aria-label="Launch speed in meters per second" />
+                <span class="unit">m/s</span>
+              </div>
+            </div>
+            <input id="input-speed" type="range" min="8" max="95" value="40" />
+          </div>
+
+          <div class="control-group control-group--fire">
+            <button id="btn-throw" class="throw-btn" type="button">
+              Throw Banana!
+            </button>
+          </div>
+        </section>
+
+        <section id="physics-lab-panel" class="physics-lab" aria-label="Physics Lab telemetry">
+          <div class="lab-metrics">
+            <div class="lab-stat">
+              <span class="lab-k">Horizontal Vx</span>
+              <span id="lab-vx" class="lab-v lab-v--vx">+28.3 m/s</span>
+            </div>
+            <div class="lab-stat">
+              <span class="lab-k">Vertical Vy</span>
+              <span id="lab-vy" class="lab-v lab-v--vy">+28.3 m/s</span>
+            </div>
+            <div class="lab-stat">
+              <span class="lab-k">Gravity (g)</span>
+              <span id="lab-g" class="lab-v">9.8 m/s²</span>
+            </div>
+            <div class="lab-stat">
+              <span class="lab-k">Wind Accel</span>
+              <span id="lab-wind" class="lab-v">0.0 m/s²</span>
+            </div>
+            <div class="lab-stat">
+              <span class="lab-k">Last Shot</span>
+              <span id="lab-last" class="lab-v">Ready to measure</span>
+            </div>
+          </div>
+          <p id="lab-tip" class="lab-tip">
+            Tip: Walk left/right (A/D) to reposition or drop onto lower roofs! You get multiple tries per turn to learn from your dotted ghost trail.
+          </p>
+        </section>
+      </main>
+
+      <!-- Setup Overlay -->
+      <div id="setup-modal" class="modal-backdrop">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+          <div class="modal-header">
+            <h2 id="setup-title">New Banana Arc Match</h2>
+            <p class="modal-subtitle">
+              Inspired by 1991's QBasic Gorillas — every skyline is verified solvable! Move across roofs, take multiple tries to dial in your arc, and explore physics.
+            </p>
+          </div>
+
+          <div class="setup-grid">
+            <div class="setup-field">
+              <label class="field-label">Players</label>
+              <div id="setup-player-count" class="segmented">
+                <button type="button" data-count="1" class="seg-btn">1 (vs Bot)</button>
+                <button type="button" data-count="2" class="seg-btn active">2 Players</button>
+                <button type="button" data-count="3" class="seg-btn">3 Players</button>
+                <button type="button" data-count="4" class="seg-btn">4 Players</button>
+              </div>
+            </div>
+
+            <div class="setup-row-split">
+              <div class="setup-field">
+                <label class="field-label">Rounds</label>
+                <div id="setup-rounds" class="segmented">
+                  <button type="button" data-rounds="3" class="seg-btn">3</button>
+                  <button type="button" data-rounds="5" class="seg-btn active">5</button>
+                  <button type="button" data-rounds="7" class="seg-btn">7</button>
+                </div>
+              </div>
+
+              <div class="setup-field">
+                <label class="field-label">Tries per Turn</label>
+                <div id="setup-tries" class="segmented">
+                  <button type="button" data-tries="1" class="seg-btn">1 Try</button>
+                  <button type="button" data-tries="3" class="seg-btn active">3 Tries</button>
+                  <button type="button" data-tries="4" class="seg-btn">4 Tries</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="bot-skill-row" class="setup-field hidden">
+              <label class="field-label">Robo-Kong Skill</label>
+              <div id="setup-bot-skill" class="segmented">
+                <button type="button" data-skill="easy" class="seg-btn active">Easy</button>
+                <button type="button" data-skill="normal" class="seg-btn">Normal</button>
+                <button type="button" data-skill="clever" class="seg-btn">Clever</button>
+              </div>
+            </div>
+
+            <div class="setup-field">
+              <label class="field-label">Player Names</label>
+              <div id="setup-names" class="names-grid"></div>
+            </div>
+
+            <div class="setup-field">
+              <label class="field-label">Planet Gravity</label>
+              <div id="setup-planets" class="planet-grid"></div>
+            </div>
+
+            <div class="setup-field setup-toggles">
+              <label class="check-label">
+                <input id="setup-hint-check" type="checkbox" />
+                <span>Aim Hint (short arc preview for younger kids)</span>
+              </label>
+              <label class="check-label">
+                <input id="setup-lab-check" type="checkbox" checked />
+                <span>Physics Lab HUD (Vx / Vy vectors &amp; flight stats)</span>
+              </label>
+              <label class="check-label">
+                <input id="setup-retro-check" type="checkbox" />
+                <span>Start in Retro '90s DOS Theme</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button id="btn-start-match" class="primary-btn" type="button">
+              Start Match!
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Game Over & Awards Overlay -->
+      <div id="gameover-modal" class="modal-backdrop hidden">
+        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
+          <div class="modal-header">
+            <h2 id="gameover-title">Match Complete!</h2>
+            <p id="gameover-winner-line" class="modal-subtitle"></p>
+          </div>
+
+          <div id="final-standings" class="standings-list"></div>
+
+          <div id="awards-section" class="awards-section">
+            <h3 class="awards-heading">Silly Physics Awards</h3>
+            <div id="awards-grid" class="awards-grid"></div>
+          </div>
+
+          <div class="modal-actions">
+            <button id="btn-rematch" class="primary-btn" type="button">Play Again</button>
+            <button id="btn-change-setup" class="secondary-btn" type="button">Change Players / Planet</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </body>
+</html>
