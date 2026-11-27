@@ -2,16 +2,17 @@
 <html lang="en" data-theme="modern">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Banana Arc — Gorilla Projectile Physics Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Banana Arc — Gorilla Projectile Physics</title>
     <meta
       name="description"
-      content="A 1–4 player tribute to QBasic Gorillas built for kids and families to play together while exploring projectile physics, gravity, and wind."
+      content="A 1–4 player tribute to QBasic Gorillas with 15 iconic world locations, 8 gorilla characters, DK bouncy tires, and Jackbox-style TV + Tablet controller mode."
     />
-    <script type="module" crossorigin src="./assets/index-DwE5W_n3.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index--a7qH0Lk.css">
+    <script type="module" crossorigin src="./assets/index-G5EdQf45.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DVpN6Fdm.css">
   </head>
   <body>
+    <!-- Main Stage View (Single-Screen & TV Host Mode) -->
     <div id="app" class="app-shell">
       <header class="top-bar">
         <div class="brand-group">
@@ -21,6 +22,9 @@
         </div>
 
         <nav class="toolbar" aria-label="Game options">
+          <button id="btn-jackbox" class="tool-btn tool-btn--tv" type="button" title="Host on TV with QR code or join on a tablet/phone">
+            TV / Tablet
+          </button>
           <button id="btn-theme" class="tool-btn" type="button" title="Switch between Modern and Retro '90s visuals">
             Theme: Modern
           </button>
@@ -43,12 +47,12 @@
       </header>
 
       <main class="stage-wrap">
-        <div class="canvas-frame">
+        <div id="canvas-frame" class="canvas-frame no-touch-menu">
           <canvas
             id="game-canvas"
             width="1200"
             height="680"
-            aria-label="Banana Arc game skyline"
+            aria-label="Banana Arc game stage"
           ></canvas>
 
           <div id="turn-banner" class="hud-banner" aria-live="polite">
@@ -59,46 +63,78 @@
 
           <div id="scoreboard-strip" class="hud-scores" aria-label="Scoreboard"></div>
 
+          <!-- TV Host Room Code + QR Card (visible in TV Host Mode) -->
+          <aside id="tv-room-card" class="tv-room-card hidden" aria-label="TV room join card">
+            <div class="tv-room-head">
+              <span class="tv-room-k">ROOM CODE</span>
+              <strong id="tv-room-code" class="tv-room-code">----</strong>
+              <span id="tv-client-badge" class="tv-client-badge">0 connected</span>
+            </div>
+            <img id="tv-qr-img" class="tv-qr-img" alt="Scan to open tablet/phone controller" />
+            <div class="tv-room-foot">Scan with tablet/phone</div>
+          </aside>
+
           <div id="toast-banner" class="toast-banner hidden" aria-live="polite"></div>
         </div>
 
-        <section id="controls-dock" class="controls-dock" aria-label="Throw and movement controls">
-          <div class="control-group control-group--move">
-            <span id="move-label" class="control-label">Move (8 left)</span>
-            <div class="dir-toggle" role="group" aria-label="Move gorilla left or right">
-              <button id="btn-move-left" class="dir-btn" type="button" title="Walk left (A key) — can drop down, can't climb up">← Step</button>
-              <button id="btn-move-right" class="dir-btn" type="button" title="Walk right (D key) — can drop down, can't climb up">Step →</button>
-            </div>
-          </div>
-
-          <div class="control-group control-group--dir">
-            <span class="control-label">Aim Side</span>
-            <div class="dir-toggle" role="group" aria-label="Throw direction">
-              <button id="btn-dir-left" class="dir-btn" type="button">← Left</button>
-              <button id="btn-dir-right" class="dir-btn active" type="button">Right →</button>
-            </div>
-          </div>
-
-          <div class="control-group control-group--slider">
-            <div class="slider-header">
-              <label for="input-angle" class="control-label">Angle</label>
-              <div class="num-wrap">
-                <input id="input-angle-num" type="number" min="5" max="88" value="45" aria-label="Launch angle in degrees" />
-                <span class="unit">°</span>
+        <!-- Touch-First Controls Dock (zero Chrome long-press menu!) -->
+        <section id="controls-dock" class="controls-dock no-touch-menu" aria-label="Throw and movement controls">
+          <div class="dock-side-group">
+            <div class="control-group">
+              <span id="move-label" class="control-label">Move (8 left)</span>
+              <div class="dir-toggle" role="group" aria-label="Move gorilla left or right">
+                <button id="btn-move-left" class="dir-btn" type="button" title="Walk left (A)">← Step</button>
+                <button id="btn-move-right" class="dir-btn" type="button" title="Walk right (D)">Step →</button>
               </div>
             </div>
-            <input id="input-angle" type="range" min="5" max="88" value="45" />
-          </div>
 
-          <div class="control-group control-group--slider">
-            <div class="slider-header">
-              <label for="input-speed" class="control-label">Speed</label>
-              <div class="num-wrap">
-                <input id="input-speed-num" type="number" min="8" max="95" value="40" aria-label="Launch speed in meters per second" />
-                <span class="unit">m/s</span>
+            <div class="control-group">
+              <span class="control-label">Aim Side</span>
+              <div class="dir-toggle" role="group" aria-label="Throw direction">
+                <button id="btn-dir-left" class="dir-btn" type="button">← Left</button>
+                <button id="btn-dir-right" class="dir-btn active" type="button">Right →</button>
               </div>
             </div>
-            <input id="input-speed" type="range" min="8" max="95" value="40" />
+          </div>
+
+          <!-- Custom Touch Slider: Angle (-30° to 89°) -->
+          <div class="control-group control-group--slider">
+            <div class="slider-header">
+              <span class="control-label">Angle</span>
+              <div class="stepper-row">
+                <button class="step-btn" type="button" data-step-angle="-5">-5</button>
+                <button class="step-btn" type="button" data-step-angle="-1">-1</button>
+                <strong id="angle-val-label" class="val-pill">45°</strong>
+                <button class="step-btn" type="button" data-step-angle="1">+1</button>
+                <button class="step-btn" type="button" data-step-angle="5">+5</button>
+              </div>
+            </div>
+            <div id="slider-angle" class="touch-slider" role="slider" aria-label="Launch angle" aria-valuemin="-30" aria-valuemax="89" aria-valuenow="45" tabindex="0">
+              <div class="touch-slider-track">
+                <div id="slider-angle-fill" class="touch-slider-fill"></div>
+                <div id="slider-angle-thumb" class="touch-slider-thumb"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Custom Touch Slider: Speed (8 to 95 m/s) -->
+          <div class="control-group control-group--slider">
+            <div class="slider-header">
+              <span class="control-label">Speed</span>
+              <div class="stepper-row">
+                <button class="step-btn" type="button" data-step-speed="-5">-5</button>
+                <button class="step-btn" type="button" data-step-speed="-1">-1</button>
+                <strong id="speed-val-label" class="val-pill">40 m/s</strong>
+                <button class="step-btn" type="button" data-step-speed="1">+1</button>
+                <button class="step-btn" type="button" data-step-speed="5">+5</button>
+              </div>
+            </div>
+            <div id="slider-speed" class="touch-slider" role="slider" aria-label="Launch speed" aria-valuemin="8" aria-valuemax="95" aria-valuenow="40" tabindex="0">
+              <div class="touch-slider-track">
+                <div id="slider-speed-fill" class="touch-slider-fill"></div>
+                <div id="slider-speed-thumb" class="touch-slider-thumb"></div>
+              </div>
+            </div>
           </div>
 
           <div class="control-group control-group--fire">
@@ -132,114 +168,265 @@
             </div>
           </div>
           <p id="lab-tip" class="lab-tip">
-            Tip: Walk left/right (A/D) to reposition or drop onto lower roofs! You get multiple tries per turn to learn from your dotted ghost trail.
+            Tip: Aim down to -30° from tall towers, bounce bananas off floating DK Tires for +20 Bank Shots, or cast to TV and pass a tablet around!
           </p>
         </section>
       </main>
+    </div>
 
-      <!-- Setup Overlay -->
-      <div id="setup-modal" class="modal-backdrop">
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="setup-title">
-          <div class="modal-header">
-            <h2 id="setup-title">New Banana Arc Match</h2>
-            <p class="modal-subtitle">
-              Inspired by 1991's QBasic Gorillas — every skyline is verified solvable! Move across roofs, take multiple tries to dial in your arc, and explore physics.
-            </p>
+    <!-- Dedicated Jackbox Tablet / Phone Controller View -->
+    <div id="controller-view" class="controller-shell hidden no-touch-menu">
+      <header class="ctrl-header">
+        <div class="ctrl-player-banner">
+          <span id="ctrl-player-swatch" class="ctrl-swatch"></span>
+          <div>
+            <div id="ctrl-turn-heading" class="ctrl-player-name">Connecting to TV...</div>
+            <div id="ctrl-meta-line" class="ctrl-meta">Enter a room code to start</div>
+          </div>
+        </div>
+        <button id="btn-ctrl-exit" class="tool-btn" type="button">Exit</button>
+      </header>
+
+      <div id="ctrl-status-bar" class="ctrl-status-bar">Waiting for TV room...</div>
+
+      <section id="ctrl-pad" class="ctrl-pad">
+        <div class="ctrl-info-strip">
+          <span id="ctrl-location-chip" class="status-chip">Location</span>
+          <span id="ctrl-wind-chip" class="status-chip">Wind 0.0</span>
+          <span id="ctrl-tries-chip" class="status-chip status-chip--planet">Try 1 / 3</span>
+        </div>
+
+        <div class="ctrl-row-two">
+          <div class="ctrl-card">
+            <span id="ctrl-move-label" class="control-label">Walk (8 left)</span>
+            <div class="ctrl-btn-pair">
+              <button id="ctrl-move-left" class="ctrl-big-btn" type="button">← Step</button>
+              <button id="ctrl-move-right" class="ctrl-big-btn" type="button">Step →</button>
+            </div>
+          </div>
+          <div class="ctrl-card">
+            <span class="control-label">Aim Side</span>
+            <div class="ctrl-btn-pair">
+              <button id="ctrl-dir-left" class="ctrl-big-btn" type="button">← Left</button>
+              <button id="ctrl-dir-right" class="ctrl-big-btn active" type="button">Right →</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ctrl-card">
+          <div class="slider-header">
+            <span class="control-label">Launch Angle (-30° to 89°)</span>
+            <strong id="ctrl-angle-val" class="val-pill val-pill--lg">45°</strong>
+          </div>
+          <div id="ctrl-slider-angle" class="touch-slider touch-slider--lg" role="slider" aria-label="Controller angle" aria-valuemin="-30" aria-valuemax="89" aria-valuenow="45">
+            <div class="touch-slider-track">
+              <div id="ctrl-slider-angle-fill" class="touch-slider-fill"></div>
+              <div id="ctrl-slider-angle-thumb" class="touch-slider-thumb"></div>
+            </div>
+          </div>
+          <div class="ctrl-steppers">
+            <button class="ctrl-step-btn" type="button" data-ctrl-angle="-5">-5°</button>
+            <button class="ctrl-step-btn" type="button" data-ctrl-angle="-1">-1°</button>
+            <button class="ctrl-step-btn" type="button" data-ctrl-angle="1">+1°</button>
+            <button class="ctrl-step-btn" type="button" data-ctrl-angle="5">+5°</button>
+          </div>
+        </div>
+
+        <div class="ctrl-card">
+          <div class="slider-header">
+            <span class="control-label">Throw Speed (8 to 95 m/s)</span>
+            <strong id="ctrl-speed-val" class="val-pill val-pill--lg">40 m/s</strong>
+          </div>
+          <div id="ctrl-slider-speed" class="touch-slider touch-slider--lg" role="slider" aria-label="Controller speed" aria-valuemin="8" aria-valuemax="95" aria-valuenow="40">
+            <div class="touch-slider-track">
+              <div id="ctrl-slider-speed-fill" class="touch-slider-fill"></div>
+              <div id="ctrl-slider-speed-thumb" class="touch-slider-thumb"></div>
+            </div>
+          </div>
+          <div class="ctrl-steppers">
+            <button class="ctrl-step-btn" type="button" data-ctrl-speed="-5">-5</button>
+            <button class="ctrl-step-btn" type="button" data-ctrl-speed="-1">-1</button>
+            <button class="ctrl-step-btn" type="button" data-ctrl-speed="1">+1</button>
+            <button class="ctrl-step-btn" type="button" data-ctrl-speed="5">+5</button>
+          </div>
+        </div>
+
+        <button id="ctrl-btn-throw" class="ctrl-throw-btn" type="button">
+          THROW BANANA!
+        </button>
+
+        <button id="ctrl-btn-rematch" class="ctrl-throw-btn hidden" type="button">
+          PLAY AGAIN ON TV!
+        </button>
+
+        <div class="ctrl-quick-toggles">
+          <button id="ctrl-toggle-hint" class="tool-btn" type="button">Aim Hint: Off</button>
+          <button id="ctrl-toggle-solution" class="tool-btn" type="button">Solution: Off</button>
+          <button id="ctrl-toggle-theme" class="tool-btn" type="button">Theme: Modern</button>
+        </div>
+
+        <div id="ctrl-scores" class="ctrl-scores"></div>
+      </section>
+    </div>
+
+    <!-- Setup Overlay -->
+    <div id="setup-modal" class="modal-backdrop">
+      <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+        <div class="modal-header">
+          <h2 id="setup-title">New Banana Arc Match</h2>
+          <p class="modal-subtitle">
+            15 iconic cities &amp; wild terrains, 8 gorilla characters, floating DK Bouncy Tires, and Jackbox-style TV + Tablet mode!
+          </p>
+        </div>
+
+        <div class="setup-grid">
+          <div class="setup-field">
+            <label class="field-label">Players</label>
+            <div id="setup-player-count" class="segmented">
+              <button type="button" data-count="1" class="seg-btn">1 (vs Bot)</button>
+              <button type="button" data-count="2" class="seg-btn active">2 Players</button>
+              <button type="button" data-count="3" class="seg-btn">3 Players</button>
+              <button type="button" data-count="4" class="seg-btn">4 Players</button>
+            </div>
           </div>
 
-          <div class="setup-grid">
+          <div class="setup-row-split">
             <div class="setup-field">
-              <label class="field-label">Players</label>
-              <div id="setup-player-count" class="segmented">
-                <button type="button" data-count="1" class="seg-btn">1 (vs Bot)</button>
-                <button type="button" data-count="2" class="seg-btn active">2 Players</button>
-                <button type="button" data-count="3" class="seg-btn">3 Players</button>
-                <button type="button" data-count="4" class="seg-btn">4 Players</button>
-              </div>
-            </div>
-
-            <div class="setup-row-split">
-              <div class="setup-field">
-                <label class="field-label">Rounds</label>
-                <div id="setup-rounds" class="segmented">
-                  <button type="button" data-rounds="3" class="seg-btn">3</button>
-                  <button type="button" data-rounds="5" class="seg-btn active">5</button>
-                  <button type="button" data-rounds="7" class="seg-btn">7</button>
-                </div>
-              </div>
-
-              <div class="setup-field">
-                <label class="field-label">Tries per Turn</label>
-                <div id="setup-tries" class="segmented">
-                  <button type="button" data-tries="1" class="seg-btn">1 Try</button>
-                  <button type="button" data-tries="3" class="seg-btn active">3 Tries</button>
-                  <button type="button" data-tries="4" class="seg-btn">4 Tries</button>
-                </div>
-              </div>
-            </div>
-
-            <div id="bot-skill-row" class="setup-field hidden">
-              <label class="field-label">Robo-Kong Skill</label>
-              <div id="setup-bot-skill" class="segmented">
-                <button type="button" data-skill="easy" class="seg-btn active">Easy</button>
-                <button type="button" data-skill="normal" class="seg-btn">Normal</button>
-                <button type="button" data-skill="clever" class="seg-btn">Clever</button>
+              <label class="field-label">Rounds</label>
+              <div id="setup-rounds" class="segmented">
+                <button type="button" data-rounds="3" class="seg-btn">3</button>
+                <button type="button" data-rounds="5" class="seg-btn active">5</button>
+                <button type="button" data-rounds="7" class="seg-btn">7</button>
               </div>
             </div>
 
             <div class="setup-field">
-              <label class="field-label">Player Names</label>
-              <div id="setup-names" class="names-grid"></div>
+              <label class="field-label">Tries per Turn</label>
+              <div id="setup-tries" class="segmented">
+                <button type="button" data-tries="1" class="seg-btn">1 Try</button>
+                <button type="button" data-tries="3" class="seg-btn active">3 Tries</button>
+                <button type="button" data-tries="4" class="seg-btn">4 Tries</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="bot-skill-row" class="setup-field hidden">
+            <label class="field-label">Robo-Kong Skill</label>
+            <div id="setup-bot-skill" class="segmented">
+              <button type="button" data-skill="easy" class="seg-btn active">Easy</button>
+              <button type="button" data-skill="normal" class="seg-btn">Normal</button>
+              <button type="button" data-skill="clever" class="seg-btn">Clever</button>
+            </div>
+          </div>
+
+          <div class="setup-field">
+            <label class="field-label">Players &amp; Gorilla Characters (tap character pill to switch)</label>
+            <div id="setup-names" class="names-grid"></div>
+          </div>
+
+          <div class="setup-row-split">
+            <div class="setup-field">
+              <label for="setup-location-select" class="field-label">Location / Terrain</label>
+              <select id="setup-location-select" class="select-input"></select>
             </div>
 
             <div class="setup-field">
               <label class="field-label">Planet Gravity</label>
               <div id="setup-planets" class="planet-grid"></div>
             </div>
-
-            <div class="setup-field setup-toggles">
-              <label class="check-label">
-                <input id="setup-hint-check" type="checkbox" />
-                <span>Aim Hint (short arc preview for younger kids)</span>
-              </label>
-              <label class="check-label">
-                <input id="setup-lab-check" type="checkbox" checked />
-                <span>Physics Lab HUD (Vx / Vy vectors &amp; flight stats)</span>
-              </label>
-              <label class="check-label">
-                <input id="setup-retro-check" type="checkbox" />
-                <span>Start in Retro '90s DOS Theme</span>
-              </label>
-            </div>
           </div>
 
-          <div class="modal-actions">
-            <button id="btn-start-match" class="primary-btn" type="button">
-              Start Match!
-            </button>
+          <div class="setup-field setup-toggles">
+            <label class="check-label">
+              <input id="setup-tires-check" type="checkbox" checked />
+              <span>Floating DK Bouncy Tires (elastic mid-air bank shots, +20 bonus)</span>
+            </label>
+            <label class="check-label">
+              <input id="setup-hint-check" type="checkbox" />
+              <span>Aim Hint (short arc preview for younger kids)</span>
+            </label>
+            <label class="check-label">
+              <input id="setup-lab-check" type="checkbox" checked />
+              <span>Physics Lab HUD (Vx / Vy vectors &amp; flight stats)</span>
+            </label>
+            <label class="check-label">
+              <input id="setup-retro-check" type="checkbox" />
+              <span>Start in Retro '90s DOS Theme</span>
+            </label>
           </div>
         </div>
+
+        <div class="modal-actions modal-actions--spread">
+          <button id="btn-setup-jackbox" class="secondary-btn" type="button">TV Host / Tablet Mode…</button>
+          <button id="btn-start-match" class="primary-btn" type="button">Start Match!</button>
+        </div>
       </div>
+    </div>
 
-      <!-- Game Over & Awards Overlay -->
-      <div id="gameover-modal" class="modal-backdrop hidden">
-        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
-          <div class="modal-header">
-            <h2 id="gameover-title">Match Complete!</h2>
-            <p id="gameover-winner-line" class="modal-subtitle"></p>
+    <!-- Jackbox TV / Tablet Modal -->
+    <div id="jackbox-modal" class="modal-backdrop hidden">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="jackbox-title">
+        <div class="modal-header">
+          <h2 id="jackbox-title">Jackbox-Style TV + Tablet Mode</h2>
+          <p class="modal-subtitle">
+            Cast this screen to your TV as the <strong>TV Host</strong>, then scan the QR code or enter the 4-letter code on a tablet or phone to pass around!
+          </p>
+        </div>
+
+        <div class="jackbox-options">
+          <div class="jackbox-box">
+            <h3>1. On the TV (or Cast Laptop)</h3>
+            <p>Shows a clean full-size skyline with a 4-letter room code &amp; QR code.</p>
+            <div class="jackbox-row">
+              <button id="btn-start-tv-host" class="primary-btn" type="button">Start TV Host Mode</button>
+              <button id="btn-stop-tv-host" class="secondary-btn hidden" type="button">Stop TV Host</button>
+            </div>
+            <p id="tv-host-status" class="jackbox-status"></p>
           </div>
 
-          <div id="final-standings" class="standings-list"></div>
-
-          <div id="awards-section" class="awards-section">
-            <h3 class="awards-heading">Silly Physics Awards</h3>
-            <div id="awards-grid" class="awards-grid"></div>
+          <div class="jackbox-box">
+            <h3>2. On the Tablet or Phone</h3>
+            <p>Opens a big-button touchscreen controller (no tiny sliders, no Chrome menus).</p>
+            <div class="jackbox-join-row">
+              <input
+                id="input-room-code"
+                class="room-code-input"
+                type="text"
+                maxlength="4"
+                placeholder="CODE"
+                autocomplete="off"
+                autocapitalize="characters"
+                aria-label="4-letter room code"
+              />
+              <button id="btn-join-controller" class="primary-btn" type="button">Join as Controller</button>
+            </div>
           </div>
+        </div>
 
-          <div class="modal-actions">
-            <button id="btn-rematch" class="primary-btn" type="button">Play Again</button>
-            <button id="btn-change-setup" class="secondary-btn" type="button">Change Players / Planet</button>
-          </div>
+        <div class="modal-actions">
+          <button id="btn-close-jackbox" class="secondary-btn" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Game Over & Awards Overlay -->
+    <div id="gameover-modal" class="modal-backdrop hidden">
+      <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
+        <div class="modal-header">
+          <h2 id="gameover-title">Match Complete!</h2>
+          <p id="gameover-winner-line" class="modal-subtitle"></p>
+        </div>
+
+        <div id="final-standings" class="standings-list"></div>
+
+        <div id="awards-section" class="awards-section">
+          <h3 class="awards-heading">Silly Physics Awards</h3>
+          <div id="awards-grid" class="awards-grid"></div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-rematch" class="primary-btn" type="button">Play Again</button>
+          <button id="btn-change-setup" class="secondary-btn" type="button">Change Players / Location</button>
         </div>
       </div>
     </div>
