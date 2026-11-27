@@ -1,8 +1,8 @@
 import './style.css';
 import { soundEngine } from './audio';
+import { CHARACTERS, CHARACTER_ORDER, DEFAULT_PLAYER_CHARACTERS } from './characters';
 import {
   BANANA_RADIUS,
-  BOT_PRESET,
   CRATER_RADIUS,
   GORILLA_HAND_OFFSET_Y,
   GORILLA_HIT_RADIUS,
@@ -17,13 +17,13 @@ import {
   PIXELS_PER_METER,
   PLANETS,
   PLANET_ORDER,
-  PLAYER_PRESETS,
+  SCORE_BANK_SHOT_BONUS,
   SCORE_DIRECT_HIT,
   SCORE_FIRST_TRY_BONUS,
   SCORE_LONG_SHOT_BONUS,
   SCORE_SPLASH_HIT,
   SCORE_SUN_BONK,
-  SELF_HIT_GRACE_SEC,
+  SELF_HIT_MIN_SEC,
   SPLASH_RADIUS,
   SUN_RADIUS,
   SUN_X,
@@ -31,30 +31,34 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from './constants';
+import { JackboxController, JackboxHost } from './jackbox';
+import { LOCATION_META } from './locations';
 import {
   clamp,
   computeAwards,
   computeVelocityComponents,
-  evaluateProjectilePosition,
   findVerifiedSolution,
   generatePhysicsTip,
   radToDeg,
   solveBotShot,
+  stepKinematicBody,
   theoreticalFlatRange,
 } from './physics';
 import { GameRenderer } from './renderer';
-import {
-  generateSolvableRound,
-  SkylineTerrain,
-  tryMoveGorilla,
-} from './skyline';
+import { generateSolvableRound, SkylineTerrain, tryMoveGorilla } from './skyline';
 import type {
+  AppMode,
   Banana,
   BotDifficulty,
+  BouncyTire,
   Cloud,
+  ConcreteLocationId,
+  ControllerCommand,
+  ControllerStateSnapshot,
   FloatingText,
   GameConfig,
   GamePhase,
+  LocationId,
   Particle,
   Player,
   ThemeMode,
@@ -69,14 +73,93 @@ function byId<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
+/**
+ * Custom pointer-driven touch slider with zero native Chrome long-press context menus!
+ */
+class TouchSlider {
+  private root: HTMLElement;
+  private fill: HTMLElement;
+  private thumb: HTMLElement;
+  private min: number;
+  private max: number;
+  private value: number;
+  private onChange: (val: number) => void;
+  private dragging = false;
+
+  constructor(
+    root: HTMLElement,
+    fill: HTMLElement,
+    thumb: HTMLElement,
+    min: number,
+    max: number,
+    initial: number,
+    onChange: (val: number) => void,
+  ) {
+    this.root = root;
+    this.fill = fill;
+    this.thumb = thumb;
+    this.min = min;
+    this.max = max;
+    this.value = initial;
+    this.onChange = onChange;
+
+    this.root.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.root.addEventListener('pointerdown', (e) => {
+      if (this.root.classList.contains('disabled')) return;
+      e.preventDefault();
+      this.dragging = true;
+      this.root.setPointerCapture(e.pointerId);
+      this.updateFromClientX(e.clientX);
+    });
+    this.root.addEventListener('pointermove', (e) => {
+      if (!this.dragging) return;
+      e.preventDefault();
+      this.updateFromClientX(e.clientX);
+    });
+    const stop = () => {
+      this.dragging = false;
+    };
+    this.root.addEventListener('pointerup', stop);
+    this.root.addEventListener('pointercancel', stop);
+
+    this.setValue(initial);
+  }
+
+  setDisabled(disabled: boolean): void {
+    this.root.classList.toggle('disabled', disabled);
+  }
+
+  setValue(val: number): void {
+    this.value = Math.round(clamp(val, this.min, this.max));
+    const pct = ((this.value - this.min) / (this.max - this.min)) * 100;
+    this.fill.style.width = `${pct}%`;
+    this.thumb.style.left = `${pct}%`;
+    this.root.setAttribute('aria-valuenow', String(this.value));
+  }
+
+  private updateFromClientX(clientX: number): void {
+    const track = this.root.querySelector<HTMLElement>('.touch-slider-track') ?? this.root;
+    const rect = track.getBoundingClientRect();
+    const frac = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+    const nextVal = Math.round(this.min + frac * (this.max - this.min));
+    if (nextVal !== this.value) {
+      this.setValue(nextVal);
+      this.onChange(nextVal);
+    }
+  }
+}
+
 class GorillaPhysicsGame {
+  private appShell = byId<HTMLDivElement>('app');
+  private controllerView = byId<HTMLDivElement>('controller-view');
   private canvas = byId<HTMLCanvasElement>('game-canvas');
   private ctx: CanvasRenderingContext2D;
   private renderer = new GameRenderer();
 
-  // DOM references
+  // Header & HUD
   private roundBadge = byId<HTMLSpanElement>('round-badge');
   private planetBadge = byId<HTMLSpanElement>('planet-badge');
+  private btnJackbox = byId<HTMLButtonElement>('btn-jackbox');
   private btnTheme = byId<HTMLButtonElement>('btn-theme');
   private btnHint = byId<HTMLButtonElement>('btn-hint');
   private btnSolution = byId<HTMLButtonElement>('btn-solution');
@@ -90,17 +173,26 @@ class GorillaPhysicsGame {
   private scoreboardStrip = byId<HTMLDivElement>('scoreboard-strip');
   private toastBanner = byId<HTMLDivElement>('toast-banner');
 
+  // TV Host card
+  private tvRoomCard = byId<HTMLElement>('tv-room-card');
+  private tvRoomCodeEl = byId<HTMLElement>('tv-room-code');
+  private tvClientBadge = byId<HTMLSpanElement>('tv-client-badge');
+  private tvQrImg = byId<HTMLImageElement>('tv-qr-img');
+
+  // Single-screen controls dock
+  private controlsDock = byId<HTMLElement>('controls-dock');
   private moveLabel = byId<HTMLSpanElement>('move-label');
   private btnMoveLeft = byId<HTMLButtonElement>('btn-move-left');
   private btnMoveRight = byId<HTMLButtonElement>('btn-move-right');
   private btnDirLeft = byId<HTMLButtonElement>('btn-dir-left');
   private btnDirRight = byId<HTMLButtonElement>('btn-dir-right');
-  private inputAngle = byId<HTMLInputElement>('input-angle');
-  private inputAngleNum = byId<HTMLInputElement>('input-angle-num');
-  private inputSpeed = byId<HTMLInputElement>('input-speed');
-  private inputSpeedNum = byId<HTMLInputElement>('input-speed-num');
+  private angleValLabel = byId<HTMLElement>('angle-val-label');
+  private speedValLabel = byId<HTMLElement>('speed-val-label');
   private btnThrow = byId<HTMLButtonElement>('btn-throw');
+  private angleSlider: TouchSlider;
+  private speedSlider: TouchSlider;
 
+  // Physics Lab
   private physicsLabPanel = byId<HTMLElement>('physics-lab-panel');
   private labVx = byId<HTMLSpanElement>('lab-vx');
   private labVy = byId<HTMLSpanElement>('lab-vy');
@@ -109,7 +201,7 @@ class GorillaPhysicsGame {
   private labLast = byId<HTMLSpanElement>('lab-last');
   private labTip = byId<HTMLParagraphElement>('lab-tip');
 
-  // Modals
+  // Setup Modal
   private setupModal = byId<HTMLDivElement>('setup-modal');
   private setupPlayerCount = byId<HTMLDivElement>('setup-player-count');
   private setupRounds = byId<HTMLDivElement>('setup-rounds');
@@ -117,12 +209,50 @@ class GorillaPhysicsGame {
   private botSkillRow = byId<HTMLDivElement>('bot-skill-row');
   private setupBotSkill = byId<HTMLDivElement>('setup-bot-skill');
   private setupNames = byId<HTMLDivElement>('setup-names');
+  private setupLocationSelect = byId<HTMLSelectElement>('setup-location-select');
   private setupPlanets = byId<HTMLDivElement>('setup-planets');
+  private setupTiresCheck = byId<HTMLInputElement>('setup-tires-check');
   private setupHintCheck = byId<HTMLInputElement>('setup-hint-check');
   private setupLabCheck = byId<HTMLInputElement>('setup-lab-check');
   private setupRetroCheck = byId<HTMLInputElement>('setup-retro-check');
+  private btnSetupJackbox = byId<HTMLButtonElement>('btn-setup-jackbox');
   private btnStartMatch = byId<HTMLButtonElement>('btn-start-match');
 
+  // Jackbox Modal
+  private jackboxModal = byId<HTMLDivElement>('jackbox-modal');
+  private btnStartTvHost = byId<HTMLButtonElement>('btn-start-tv-host');
+  private btnStopTvHost = byId<HTMLButtonElement>('btn-stop-tv-host');
+  private tvHostStatus = byId<HTMLParagraphElement>('tv-host-status');
+  private inputRoomCode = byId<HTMLInputElement>('input-room-code');
+  private btnJoinController = byId<HTMLButtonElement>('btn-join-controller');
+  private btnCloseJackbox = byId<HTMLButtonElement>('btn-close-jackbox');
+
+  // Dedicated Controller View DOM
+  private ctrlPlayerSwatch = byId<HTMLSpanElement>('ctrl-player-swatch');
+  private ctrlTurnHeading = byId<HTMLDivElement>('ctrl-turn-heading');
+  private ctrlMetaLine = byId<HTMLDivElement>('ctrl-meta-line');
+  private ctrlStatusBar = byId<HTMLDivElement>('ctrl-status-bar');
+  private ctrlLocationChip = byId<HTMLSpanElement>('ctrl-location-chip');
+  private ctrlWindChip = byId<HTMLSpanElement>('ctrl-wind-chip');
+  private ctrlTriesChip = byId<HTMLSpanElement>('ctrl-tries-chip');
+  private ctrlMoveLabel = byId<HTMLSpanElement>('ctrl-move-label');
+  private ctrlMoveLeft = byId<HTMLButtonElement>('ctrl-move-left');
+  private ctrlMoveRight = byId<HTMLButtonElement>('ctrl-move-right');
+  private ctrlDirLeft = byId<HTMLButtonElement>('ctrl-dir-left');
+  private ctrlDirRight = byId<HTMLButtonElement>('ctrl-dir-right');
+  private ctrlAngleVal = byId<HTMLElement>('ctrl-angle-val');
+  private ctrlSpeedVal = byId<HTMLElement>('ctrl-speed-val');
+  private ctrlBtnThrow = byId<HTMLButtonElement>('ctrl-btn-throw');
+  private ctrlBtnRematch = byId<HTMLButtonElement>('ctrl-btn-rematch');
+  private ctrlToggleHint = byId<HTMLButtonElement>('ctrl-toggle-hint');
+  private ctrlToggleSolution = byId<HTMLButtonElement>('ctrl-toggle-solution');
+  private ctrlToggleTheme = byId<HTMLButtonElement>('ctrl-toggle-theme');
+  private ctrlScores = byId<HTMLDivElement>('ctrl-scores');
+  private btnCtrlExit = byId<HTMLButtonElement>('btn-ctrl-exit');
+  private ctrlAngleSlider: TouchSlider;
+  private ctrlSpeedSlider: TouchSlider;
+
+  // Game Over Modal
   private gameoverModal = byId<HTMLDivElement>('gameover-modal');
   private gameoverWinnerLine = byId<HTMLParagraphElement>('gameover-winner-line');
   private finalStandings = byId<HTMLDivElement>('final-standings');
@@ -131,23 +261,37 @@ class GorillaPhysicsGame {
   private btnRematch = byId<HTMLButtonElement>('btn-rematch');
   private btnChangeSetup = byId<HTMLButtonElement>('btn-change-setup');
 
-  // Game state
+  // Networking (Jackbox Mode)
+  private appMode: AppMode = 'single';
+  private jackboxHost: JackboxHost | null = null;
+  private jackboxController: JackboxController | null = null;
+  private ctrlAimAngle = 45;
+  private ctrlAimSpeed = 40;
+  private ctrlAimDir: ThrowDirection = 1;
+  private lastCtrlSendMs = 0;
+
+  // Game State
   private config: GameConfig = {
     humanCount: 2,
     rounds: 5,
     triesPerTurn: 3,
     planetId: 'earth',
+    locationId: 'random',
+    enableTires: true,
     botDifficulty: 'easy',
-    playerNames: PLAYER_PRESETS.map((p) => p.defaultName),
+    playerNames: DEFAULT_PLAYER_CHARACTERS.map((id) => CHARACTERS[id].name),
+    playerCharacters: [...DEFAULT_PLAYER_CHARACTERS],
   };
 
   private theme: ThemeMode = 'modern';
   private showAimHint = false;
-  private showSolution = false; // Defaults to Off!
+  private showSolution = false;
   private showPhysicsLab = true;
   private phase: GamePhase = 'setup';
 
   private terrain: SkylineTerrain;
+  private currentLocationId: ConcreteLocationId = 'nyc';
+  private tires: BouncyTire[] = [];
   private players: Player[] = [];
   private activePlayerIndex = 0;
   private currentRound = 1;
@@ -158,7 +302,7 @@ class GorillaPhysicsGame {
   private turnEndedByHit = false;
   private verifiedSolution: VerifiedSolution | null = null;
 
-  private windAccel = 0; // m/s^2
+  private windAccel = 0;
   private aimAngle = 45;
   private aimSpeed = 40;
   private aimDirection: ThrowDirection = 1;
@@ -178,7 +322,6 @@ class GorillaPhysicsGame {
   private botThinkTimer = 0;
   private postShotTimer = 0;
   private pendingRespawnIds: number[] = [];
-
   private isDraggingAim = false;
 
   constructor() {
@@ -186,14 +329,76 @@ class GorillaPhysicsGame {
     if (!ctx) throw new Error('2D canvas not supported');
     this.ctx = ctx;
 
-    const preview = generateSolvableRound(2, PLANETS.earth.gravity, true, 1991);
+    // Suppress long-press context menu everywhere inside touch surfaces
+    document.querySelectorAll('.no-touch-menu').forEach((el) => {
+      el.addEventListener('contextmenu', (e) => e.preventDefault());
+    });
+
+    // Custom touch sliders (single-screen dock)
+    this.angleSlider = new TouchSlider(
+      byId('slider-angle'),
+      byId('slider-angle-fill'),
+      byId('slider-angle-thumb'),
+      MIN_ANGLE,
+      MAX_ANGLE,
+      45,
+      (v) => this.setAimAngle(v),
+    );
+    this.speedSlider = new TouchSlider(
+      byId('slider-speed'),
+      byId('slider-speed-fill'),
+      byId('slider-speed-thumb'),
+      MIN_SPEED,
+      MAX_SPEED,
+      40,
+      (v) => this.setAimSpeed(v),
+    );
+
+    // Custom touch sliders (Jackbox tablet/phone controller)
+    this.ctrlAngleSlider = new TouchSlider(
+      byId('ctrl-slider-angle'),
+      byId('ctrl-slider-angle-fill'),
+      byId('ctrl-slider-angle-thumb'),
+      MIN_ANGLE,
+      MAX_ANGLE,
+      45,
+      (v) => {
+        this.ctrlAimAngle = v;
+        this.ctrlAngleVal.textContent = `${v}°`;
+        this.sendControllerAimThrottled();
+      },
+    );
+    this.ctrlSpeedSlider = new TouchSlider(
+      byId('ctrl-slider-speed'),
+      byId('ctrl-slider-speed-fill'),
+      byId('ctrl-slider-speed-thumb'),
+      MIN_SPEED,
+      MAX_SPEED,
+      40,
+      (v) => {
+        this.ctrlAimSpeed = v;
+        this.ctrlSpeedVal.textContent = `${v} m/s`;
+        this.sendControllerAimThrottled();
+      },
+    );
+
+    const preview = generateSolvableRound(2, PLANETS.earth.gravity, true, 'nyc', true, 1991);
     this.terrain = preview.terrain;
+    this.tires = preview.tires;
+    this.currentLocationId = preview.locationId;
+
     this.initAtmosphere();
     this.initSetupUI();
     this.bindEvents();
     this.syncToolbarUI();
-
     this.setupPreviewScene(preview);
+
+    // Auto-join Controller Mode if opened via TV QR code (?room=XXXX)
+    const params = new URLSearchParams(window.location.search);
+    const roomParam = params.get('room');
+    if (roomParam && roomParam.trim().length === 4) {
+      this.enterControllerMode(roomParam.trim().toUpperCase());
+    }
 
     this.lastFrameMs = performance.now();
     requestAnimationFrame((now) => this.loop(now));
@@ -220,12 +425,14 @@ class GorillaPhysicsGame {
 
   private setupPreviewScene(preview: ReturnType<typeof generateSolvableRound>): void {
     this.terrain = preview.terrain;
+    this.tires = preview.tires;
+    this.currentLocationId = preview.locationId;
     this.renderer.invalidateBuildings();
     this.windAccel = preview.windAccel;
-    this.players = preview.spawnIndices.map((bIdx, i) => {
-      const b = this.terrain.buildings[bIdx];
-      const preset = PLAYER_PRESETS[i];
-      return this.createPlayer(i, preset.defaultName, preset, false, b.x + b.width / 2, b.topY, bIdx);
+    this.players = preview.spawnPositions.map((pos, i) => {
+      const charId = DEFAULT_PLAYER_CHARACTERS[i];
+      const ch = CHARACTERS[charId];
+      return this.createPlayer(i, ch.name, charId, false, pos.x, pos.y, pos.zoneIndex);
     });
     this.activePlayerIndex = 0;
   }
@@ -233,31 +440,32 @@ class GorillaPhysicsGame {
   private createPlayer(
     id: number,
     name: string,
-    preset: (typeof PLAYER_PRESETS)[number],
+    characterId: Player['characterId'],
     isBot: boolean,
     x: number,
     y: number,
-    buildingIndex: number,
+    zoneIndex: number,
   ): Player {
+    const ch = CHARACTERS[characterId];
     const planet = PLANETS[this.config.planetId];
     return {
       id,
       name,
-      color: preset.color,
-      accentColor: preset.accentColor,
-      hatStyle: preset.hatStyle,
+      characterId,
+      color: ch.color,
+      accentColor: ch.accentColor,
       isBot,
       botDifficulty: this.config.botDifficulty,
       x,
       y,
-      buildingIndex,
+      zoneIndex,
       score: 0,
       hits: 0,
       splashHits: 0,
+      bankShotHits: 0,
       sunBonks: 0,
       maxApexMeters: 0,
       blocksDestroyed: 0,
-      directSnipes: 0,
       shotsTaken: 0,
       lastShot: null,
       preferredAngle: 45,
@@ -269,6 +477,30 @@ class GorillaPhysicsGame {
   }
 
   private initSetupUI(): void {
+    // Location selector (Random World Tour + 12 cities + 3 wild terrains)
+    this.setupLocationSelect.innerHTML = '';
+    const randomOpt = document.createElement('option');
+    randomOpt.value = 'random';
+    randomOpt.textContent = 'Random World Tour (15 places)';
+    this.setupLocationSelect.appendChild(randomOpt);
+
+    const cityGroup = document.createElement('optgroup');
+    cityGroup.label = 'Iconic World Cities (12)';
+    const wildGroup = document.createElement('optgroup');
+    wildGroup.label = 'Wild Non-Building Terrains (3)';
+
+    for (const loc of LOCATION_META) {
+      const opt = document.createElement('option');
+      opt.value = loc.id;
+      opt.textContent = `${loc.name} (${loc.region})`;
+      if (loc.category === 'city') cityGroup.appendChild(opt);
+      else wildGroup.appendChild(opt);
+    }
+    this.setupLocationSelect.appendChild(cityGroup);
+    this.setupLocationSelect.appendChild(wildGroup);
+    this.setupLocationSelect.value = this.config.locationId;
+
+    // Planets
     this.setupPlanets.innerHTML = '';
     for (const id of PLANET_ORDER) {
       const p = PLANETS[id];
@@ -276,7 +508,7 @@ class GorillaPhysicsGame {
       btn.type = 'button';
       btn.className = `planet-btn${id === this.config.planetId ? ' active' : ''}`;
       btn.dataset.planet = id;
-      btn.innerHTML = `<strong>${p.name}</strong><small>${p.tagline}</small>`;
+      btn.innerHTML = `<strong>${p.name}</strong><small>${p.gravity} m/s²</small>`;
       btn.addEventListener('click', () => {
         this.config.planetId = id;
         this.setupPlanets.querySelectorAll('.planet-btn').forEach((el) => {
@@ -296,32 +528,56 @@ class GorillaPhysicsGame {
     this.botSkillRow.classList.toggle('hidden', count !== 1);
 
     for (let i = 0; i < count; i++) {
-      const preset = PLAYER_PRESETS[i];
+      const charId = this.config.playerCharacters[i] ?? DEFAULT_PLAYER_CHARACTERS[i];
+      const ch = CHARACTERS[charId];
       const row = document.createElement('div');
       row.className = 'name-input-row';
       row.innerHTML = `
-        <span class="name-swatch" style="background:${preset.color}"></span>
-        <input type="text" maxlength="14" value="${this.config.playerNames[i] || preset.defaultName}" aria-label="Player ${i + 1} name" />
+        <span class="name-swatch" style="background:${ch.color}"></span>
+        <input type="text" maxlength="14" value="${this.config.playerNames[i] || ch.name}" aria-label="Player ${i + 1} name" />
+        <button type="button" class="char-pick-btn" title="Tap to switch gorilla character">${ch.name} ▸</button>
       `;
       const input = row.querySelector('input')!;
+      const swatch = row.querySelector<HTMLElement>('.name-swatch')!;
+      const pickBtn = row.querySelector<HTMLButtonElement>('.char-pick-btn')!;
+
       input.addEventListener('input', () => {
-        this.config.playerNames[i] = input.value.trim() || preset.defaultName;
+        this.config.playerNames[i] = input.value.trim() || CHARACTERS[this.config.playerCharacters[i]].name;
       });
+
+      pickBtn.addEventListener('click', () => {
+        const curIdx = CHARACTER_ORDER.indexOf(this.config.playerCharacters[i]);
+        const nextId = CHARACTER_ORDER[(curIdx + 1) % CHARACTER_ORDER.length];
+        const prevDefault = CHARACTERS[this.config.playerCharacters[i]].name;
+        this.config.playerCharacters[i] = nextId;
+        const nextCh = CHARACTERS[nextId];
+        swatch.style.background = nextCh.color;
+        pickBtn.textContent = `${nextCh.name} ▸`;
+        if (!input.value.trim() || input.value.trim() === prevDefault) {
+          input.value = nextCh.name;
+          this.config.playerNames[i] = nextCh.name;
+        }
+        soundEngine.playTick();
+      });
+
       this.setupNames.appendChild(row);
     }
 
     if (count === 1) {
+      const botCh = CHARACTERS['robo-kong'];
       const botRow = document.createElement('div');
       botRow.className = 'name-input-row';
       botRow.innerHTML = `
-        <span class="name-swatch" style="background:${BOT_PRESET.color}"></span>
+        <span class="name-swatch" style="background:${botCh.color}"></span>
         <input type="text" value="Robo-Kong (Bot)" disabled aria-label="Bot player" />
+        <span class="char-pick-btn">Laser Visor</span>
       `;
       this.setupNames.appendChild(botRow);
     }
   }
 
   private bindEvents(): void {
+    // Setup modal listeners
     this.setupPlayerCount.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-count]');
       if (!btn) return;
@@ -355,7 +611,12 @@ class GorillaPhysicsGame {
       btn.classList.add('active');
     });
 
+    this.setupLocationSelect.addEventListener('change', () => {
+      this.config.locationId = this.setupLocationSelect.value as LocationId;
+    });
+
     this.btnStartMatch.addEventListener('click', () => {
+      this.config.enableTires = this.setupTiresCheck.checked;
       this.showAimHint = this.setupHintCheck.checked;
       this.showPhysicsLab = this.setupLabCheck.checked;
       this.setTheme(this.setupRetroCheck.checked ? 'retro' : 'modern');
@@ -363,10 +624,30 @@ class GorillaPhysicsGame {
       this.startMatch();
     });
 
+    // Jackbox modal triggers
+    const openJackbox = () => {
+      this.jackboxModal.classList.remove('hidden');
+    };
+    this.btnJackbox.addEventListener('click', openJackbox);
+    this.btnSetupJackbox.addEventListener('click', openJackbox);
+    this.btnCloseJackbox.addEventListener('click', () => {
+      this.jackboxModal.classList.add('hidden');
+    });
+
+    this.btnStartTvHost.addEventListener('click', () => this.startTvHostMode());
+    this.btnStopTvHost.addEventListener('click', () => this.stopTvHostMode());
+    this.btnJoinController.addEventListener('click', () => {
+      this.enterControllerMode(this.inputRoomCode.value);
+    });
+    this.inputRoomCode.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.enterControllerMode(this.inputRoomCode.value);
+    });
+
     // Toolbar toggles
     this.btnTheme.addEventListener('click', () => {
       this.setTheme(this.theme === 'modern' ? 'retro' : 'modern');
       soundEngine.playTick();
+      this.broadcastHostState();
     });
 
     this.btnHint.addEventListener('click', () => {
@@ -374,15 +655,15 @@ class GorillaPhysicsGame {
       this.setupHintCheck.checked = this.showAimHint;
       this.syncToolbarUI();
       soundEngine.playTick();
+      this.broadcastHostState();
     });
 
     this.btnSolution.addEventListener('click', () => {
       this.showSolution = !this.showSolution;
-      if (this.showSolution) {
-        this.refreshVerifiedSolution();
-      }
+      if (this.showSolution) this.refreshVerifiedSolution();
       this.syncToolbarUI();
       soundEngine.playTick();
+      this.broadcastHostState();
     });
 
     this.btnLab.addEventListener('click', () => {
@@ -390,12 +671,14 @@ class GorillaPhysicsGame {
       this.setupLabCheck.checked = this.showPhysicsLab;
       this.syncToolbarUI();
       soundEngine.playTick();
+      this.broadcastHostState();
     });
 
     this.btnSound.addEventListener('click', () => {
       soundEngine.toggleMute();
       this.syncToolbarUI();
       if (!soundEngine.isMuted()) soundEngine.playTick();
+      this.broadcastHostState();
     });
 
     this.btnNewGame.addEventListener('click', () => {
@@ -404,62 +687,107 @@ class GorillaPhysicsGame {
       this.setupRetroCheck.checked = this.theme === 'retro';
       this.setupHintCheck.checked = this.showAimHint;
       this.setupLabCheck.checked = this.showPhysicsLab;
+      this.setupTiresCheck.checked = this.config.enableTires;
       this.gameoverModal.classList.add('hidden');
       this.setupModal.classList.remove('hidden');
+      this.broadcastHostState();
     });
 
-    // Controls dock
+    // Single-screen controls dock
     this.btnMoveLeft.addEventListener('click', () => this.moveActiveGorilla(-1));
     this.btnMoveRight.addEventListener('click', () => this.moveActiveGorilla(1));
-
     this.btnDirLeft.addEventListener('click', () => this.setAimDirection(-1));
     this.btnDirRight.addEventListener('click', () => this.setAimDirection(1));
 
-    this.inputAngle.addEventListener('input', () => {
-      this.setAimAngle(Number(this.inputAngle.value));
-    });
-    this.inputAngleNum.addEventListener('change', () => {
-      this.setAimAngle(Number(this.inputAngleNum.value));
-    });
-
-    this.inputSpeed.addEventListener('input', () => {
-      this.setAimSpeed(Number(this.inputSpeed.value));
-    });
-    this.inputSpeedNum.addEventListener('change', () => {
-      this.setAimSpeed(Number(this.inputSpeedNum.value));
+    this.controlsDock.addEventListener('click', (e) => {
+      if (!this.canHumanControl()) return;
+      const aBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-step-angle]');
+      if (aBtn) {
+        this.setAimAngle(this.aimAngle + Number(aBtn.dataset.stepAngle));
+        soundEngine.playTick();
+        return;
+      }
+      const sBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-step-speed]');
+      if (sBtn) {
+        this.setAimSpeed(this.aimSpeed + Number(sBtn.dataset.stepSpeed));
+        soundEngine.playTick();
+      }
     });
 
     this.btnThrow.addEventListener('click', () => {
-      if (this.canHumanControl()) {
-        this.fireCurrentPlayerBanana();
+      if (this.canHumanControl()) this.fireCurrentPlayerBanana();
+    });
+
+    // Dedicated Controller View events
+    this.btnCtrlExit.addEventListener('click', () => this.exitControllerMode());
+    this.ctrlMoveLeft.addEventListener('click', () => this.sendControllerCommand({ type: 'move', dir: -1 }));
+    this.ctrlMoveRight.addEventListener('click', () => this.sendControllerCommand({ type: 'move', dir: 1 }));
+    this.ctrlDirLeft.addEventListener('click', () => {
+      this.ctrlAimDir = -1;
+      this.ctrlDirLeft.classList.add('active');
+      this.ctrlDirRight.classList.remove('active');
+      this.sendControllerCommand({ type: 'aim', direction: -1 });
+    });
+    this.ctrlDirRight.addEventListener('click', () => {
+      this.ctrlAimDir = 1;
+      this.ctrlDirRight.classList.add('active');
+      this.ctrlDirLeft.classList.remove('active');
+      this.sendControllerCommand({ type: 'aim', direction: 1 });
+    });
+
+    this.controllerView.addEventListener('click', (e) => {
+      const aBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-ctrl-angle]');
+      if (aBtn) {
+        this.ctrlAimAngle = clamp(this.ctrlAimAngle + Number(aBtn.dataset.ctrlAngle), MIN_ANGLE, MAX_ANGLE);
+        this.ctrlAngleSlider.setValue(this.ctrlAimAngle);
+        this.ctrlAngleVal.textContent = `${this.ctrlAimAngle}°`;
+        this.sendControllerCommand({ type: 'aim', angle: this.ctrlAimAngle });
+        return;
+      }
+      const sBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-ctrl-speed]');
+      if (sBtn) {
+        this.ctrlAimSpeed = clamp(this.ctrlAimSpeed + Number(sBtn.dataset.ctrlSpeed), MIN_SPEED, MAX_SPEED);
+        this.ctrlSpeedSlider.setValue(this.ctrlAimSpeed);
+        this.ctrlSpeedVal.textContent = `${this.ctrlAimSpeed} m/s`;
+        this.sendControllerCommand({ type: 'aim', speed: this.ctrlAimSpeed });
       }
     });
+
+    this.ctrlBtnThrow.addEventListener('click', () => {
+      this.sendControllerCommand({ type: 'throw' });
+    });
+    this.ctrlBtnRematch.addEventListener('click', () => {
+      this.sendControllerCommand({ type: 'rematch' });
+    });
+    this.ctrlToggleHint.addEventListener('click', () => this.sendControllerCommand({ type: 'toggle', key: 'hint' }));
+    this.ctrlToggleSolution.addEventListener('click', () => this.sendControllerCommand({ type: 'toggle', key: 'solution' }));
+    this.ctrlToggleTheme.addEventListener('click', () => this.sendControllerCommand({ type: 'toggle', key: 'theme' }));
 
     // Game Over modal buttons
     this.btnRematch.addEventListener('click', () => {
       this.gameoverModal.classList.add('hidden');
       this.startMatch();
     });
-
     this.btnChangeSetup.addEventListener('click', () => {
       this.gameoverModal.classList.add('hidden');
       this.phase = 'setup';
       this.setupModal.classList.remove('hidden');
+      this.broadcastHostState();
     });
 
-    // Canvas drag-to-aim (mouse + touch via Pointer Events)
+    // Canvas drag-to-aim (supports negative downward angles down to -30°!)
     this.canvas.addEventListener('pointerdown', (e) => {
       if (!this.canHumanControl()) return;
+      e.preventDefault();
       this.isDraggingAim = true;
       this.canvas.setPointerCapture(e.pointerId);
       this.updateAimFromPointer(e);
     });
-
     this.canvas.addEventListener('pointermove', (e) => {
       if (!this.isDraggingAim || !this.canHumanControl()) return;
+      e.preventDefault();
       this.updateAimFromPointer(e);
     });
-
     const endDrag = () => {
       this.isDraggingAim = false;
     };
@@ -469,8 +797,8 @@ class GorillaPhysicsGame {
     // Keyboard shortcuts
     window.addEventListener('keydown', (e) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (!this.canHumanControl()) return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (!this.canHumanControl() || this.appMode === 'controller') return;
 
       const step = e.shiftKey ? 5 : 1;
       if (e.key === 'a' || e.key === 'A') {
@@ -501,6 +829,275 @@ class GorillaPhysicsGame {
     });
   }
 
+  // ==================== Jackbox TV Host & Controller ====================
+
+  private startTvHostMode(): void {
+    this.appMode = 'tv-host';
+    this.tvHostStatus.textContent = 'Opening TV room...';
+    this.btnStartTvHost.disabled = true;
+
+    this.jackboxHost?.destroy();
+    this.jackboxHost = new JackboxHost({
+      onReady: (code, qrDataUrl) => {
+        this.btnStartTvHost.disabled = false;
+        this.btnStartTvHost.classList.add('hidden');
+        this.btnStopTvHost.classList.remove('hidden');
+        this.tvRoomCodeEl.textContent = code;
+        if (qrDataUrl) {
+          this.tvQrImg.src = qrDataUrl;
+          this.tvQrImg.classList.remove('hidden');
+        } else {
+          this.tvQrImg.classList.add('hidden');
+        }
+        this.tvRoomCard.classList.remove('hidden');
+        this.tvHostStatus.textContent = `TV Room ${code} is live! Scan QR on your tablet or phone.`;
+        this.btnJackbox.textContent = `TV: ${code}`;
+        this.jackboxModal.classList.add('hidden');
+        if (this.phase === 'setup') {
+          this.startMatch();
+        } else {
+          this.broadcastHostState();
+        }
+      },
+      onClientCountChange: (count) => {
+        this.tvClientBadge.textContent =
+          count === 1 ? '1 controller live' : `${count} controllers live`;
+        // Hide bottom touch dock on TV when a remote tablet/phone is driving the game!
+        this.controlsDock.classList.toggle('hidden', this.appMode === 'tv-host' && count > 0);
+        if (count > 0) {
+          this.showToast('Tablet/Phone controller connected! Cast & pass away!', 2.6);
+          this.broadcastHostState();
+        }
+      },
+      onCommand: (cmd) => this.handleControllerCommand(cmd),
+      onError: (msg) => {
+        this.btnStartTvHost.disabled = false;
+        this.tvHostStatus.textContent = msg;
+      },
+    });
+    this.jackboxHost.start();
+  }
+
+  private stopTvHostMode(): void {
+    this.jackboxHost?.destroy();
+    this.jackboxHost = null;
+    this.appMode = 'single';
+    this.tvRoomCard.classList.add('hidden');
+    this.controlsDock.classList.remove('hidden');
+    this.btnStartTvHost.classList.remove('hidden');
+    this.btnStopTvHost.classList.add('hidden');
+    this.tvHostStatus.textContent = 'TV Host Mode stopped.';
+    this.btnJackbox.textContent = 'TV / Tablet';
+  }
+
+  private handleControllerCommand(cmd: ControllerCommand): void {
+    if (cmd.type === 'hello') {
+      this.broadcastHostState();
+      return;
+    }
+    if (cmd.type === 'toggle') {
+      if (cmd.key === 'theme') this.setTheme(this.theme === 'modern' ? 'retro' : 'modern');
+      else if (cmd.key === 'hint') {
+        this.showAimHint = !this.showAimHint;
+        this.syncToolbarUI();
+      } else if (cmd.key === 'solution') {
+        this.showSolution = !this.showSolution;
+        if (this.showSolution) this.refreshVerifiedSolution();
+        this.syncToolbarUI();
+      } else if (cmd.key === 'lab') {
+        this.showPhysicsLab = !this.showPhysicsLab;
+        this.syncToolbarUI();
+      } else if (cmd.key === 'sound') {
+        soundEngine.toggleMute();
+        this.syncToolbarUI();
+      }
+      this.broadcastHostState();
+      return;
+    }
+    if (cmd.type === 'rematch' && this.phase === 'game_over') {
+      this.gameoverModal.classList.add('hidden');
+      this.startMatch();
+      return;
+    }
+
+    if (!this.canHumanControl()) return;
+
+    if (cmd.type === 'aim') {
+      if (cmd.direction !== undefined) this.setAimDirection(cmd.direction);
+      if (cmd.angle !== undefined) this.setAimAngle(cmd.angle);
+      if (cmd.speed !== undefined) this.setAimSpeed(cmd.speed);
+    } else if (cmd.type === 'move') {
+      this.moveActiveGorilla(cmd.dir);
+    } else if (cmd.type === 'throw') {
+      this.fireCurrentPlayerBanana();
+    }
+  }
+
+  private broadcastHostState(): void {
+    if (this.appMode !== 'tv-host' || !this.jackboxHost) return;
+    const active = this.players[this.activePlayerIndex];
+    const planet = PLANETS[this.config.planetId];
+    const loc = this.terrain.location;
+
+    const snapshot: ControllerStateSnapshot = {
+      type: 'state',
+      phase: this.phase,
+      round: this.currentRound,
+      totalRounds: this.config.rounds,
+      locationName: `${loc.name}, ${loc.region}`,
+      planetName: planet.name,
+      gravity: planet.gravity,
+      windAccel: this.windAccel,
+      activePlayerName: active?.name ?? 'Player',
+      activePlayerColor: active?.color ?? '#d95d39',
+      activeCharacterId: active?.characterId ?? 'king-kong',
+      activeIsBot: Boolean(active?.isBot),
+      triesLeft: this.triesRemaining,
+      triesTotal: this.config.triesPerTurn,
+      movesLeft: this.movesRemaining,
+      aimAngle: this.aimAngle,
+      aimSpeed: this.aimSpeed,
+      aimDirection: this.aimDirection,
+      canControl: this.canHumanControl(),
+      showAimHint: this.showAimHint,
+      showSolution: this.showSolution,
+      showPhysicsLab: this.showPhysicsLab,
+      theme: this.theme,
+      muted: soundEngine.isMuted(),
+      scores: this.players.map((p, idx) => ({
+        name: p.name,
+        color: p.color,
+        score: p.score,
+        active: idx === this.activePlayerIndex,
+      })),
+      lastTip: this.labTip.textContent ?? '',
+      winnerText: this.phase === 'game_over' ? this.gameoverWinnerLine.textContent ?? '' : undefined,
+    };
+    this.jackboxHost.broadcast(snapshot);
+  }
+
+  private enterControllerMode(rawCode: string): void {
+    const code = rawCode.trim().toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+    if (code.length !== 4) {
+      this.inputRoomCode.focus();
+      return;
+    }
+
+    this.jackboxHost?.destroy();
+    this.jackboxHost = null;
+    this.appMode = 'controller';
+
+    this.setupModal.classList.add('hidden');
+    this.jackboxModal.classList.add('hidden');
+    this.gameoverModal.classList.add('hidden');
+    this.appShell.classList.add('hidden');
+    this.controllerView.classList.remove('hidden');
+
+    this.jackboxController?.destroy();
+    this.jackboxController = new JackboxController({
+      onStatus: (_status, msg) => {
+        this.ctrlStatusBar.textContent = msg;
+      },
+      onState: (snap) => this.applyControllerSnapshot(snap),
+    });
+    this.jackboxController.connect(code);
+  }
+
+  private exitControllerMode(): void {
+    this.jackboxController?.destroy();
+    this.jackboxController = null;
+    this.appMode = 'single';
+    this.controllerView.classList.add('hidden');
+    this.appShell.classList.remove('hidden');
+    // Clean ?room= from URL if present
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    window.history.replaceState({}, '', url.toString());
+  }
+
+  private sendControllerCommand(cmd: ControllerCommand): void {
+    this.jackboxController?.send(cmd);
+  }
+
+  private sendControllerAimThrottled(): void {
+    const now = performance.now();
+    if (now - this.lastCtrlSendMs < 35) return;
+    this.lastCtrlSendMs = now;
+    this.sendControllerCommand({
+      type: 'aim',
+      angle: this.ctrlAimAngle,
+      speed: this.ctrlAimSpeed,
+      direction: this.ctrlAimDir,
+    });
+  }
+
+  private applyControllerSnapshot(snap: ControllerStateSnapshot): void {
+    if (this.theme !== snap.theme) {
+      document.documentElement.setAttribute('data-theme', snap.theme);
+    }
+
+    const ch = CHARACTERS[snap.activeCharacterId];
+    this.ctrlPlayerSwatch.style.background = snap.activePlayerColor;
+    this.ctrlTurnHeading.textContent =
+      snap.phase === 'game_over'
+        ? 'Match Complete!'
+        : snap.activeIsBot
+          ? `${snap.activePlayerName} is aiming...`
+          : `Pass to ${snap.activePlayerName}!`;
+    this.ctrlMetaLine.textContent =
+      snap.phase === 'game_over'
+        ? snap.winnerText ?? 'See TV for full awards!'
+        : `${ch.name} (${ch.title}) · Round ${snap.round}/${snap.totalRounds}`;
+
+    this.ctrlLocationChip.textContent = snap.locationName;
+    this.ctrlWindChip.textContent =
+      Math.abs(snap.windAccel) < 0.2
+        ? 'Calm Air'
+        : `Wind ${snap.windAccel > 0 ? '→' : '←'} ${Math.abs(snap.windAccel).toFixed(1)}`;
+    const tryNum = snap.triesTotal - snap.triesLeft + 1;
+    this.ctrlTriesChip.textContent = `Try ${Math.min(tryNum, snap.triesTotal)} / ${snap.triesTotal}`;
+    this.ctrlMoveLabel.textContent = `Walk (${snap.movesLeft} left)`;
+
+    this.ctrlAimAngle = snap.aimAngle;
+    this.ctrlAimSpeed = snap.aimSpeed;
+    this.ctrlAimDir = snap.aimDirection;
+    this.ctrlAngleSlider.setValue(snap.aimAngle);
+    this.ctrlSpeedSlider.setValue(snap.aimSpeed);
+    this.ctrlAngleVal.textContent = `${snap.aimAngle}°`;
+    this.ctrlSpeedVal.textContent = `${snap.aimSpeed} m/s`;
+    this.ctrlDirLeft.classList.toggle('active', snap.aimDirection === -1);
+    this.ctrlDirRight.classList.toggle('active', snap.aimDirection === 1);
+
+    const enabled = snap.canControl;
+    this.ctrlAngleSlider.setDisabled(!enabled);
+    this.ctrlSpeedSlider.setDisabled(!enabled);
+    this.ctrlMoveLeft.disabled = !enabled || snap.movesLeft <= 0;
+    this.ctrlMoveRight.disabled = !enabled || snap.movesLeft <= 0;
+    this.ctrlDirLeft.disabled = !enabled;
+    this.ctrlDirRight.disabled = !enabled;
+    this.ctrlBtnThrow.disabled = !enabled;
+    this.controllerView.querySelectorAll<HTMLButtonElement>('.ctrl-step-btn').forEach((b) => {
+      b.disabled = !enabled;
+    });
+
+    const isOver = snap.phase === 'game_over';
+    this.ctrlBtnThrow.classList.toggle('hidden', isOver);
+    this.ctrlBtnRematch.classList.toggle('hidden', !isOver);
+
+    this.ctrlToggleHint.textContent = `Aim Hint: ${snap.showAimHint ? 'On' : 'Off'}`;
+    this.ctrlToggleSolution.textContent = `Solution: ${snap.showSolution ? 'On' : 'Off'}`;
+    this.ctrlToggleTheme.textContent = snap.theme === 'modern' ? 'Theme: Modern' : "Theme: Retro '90s";
+
+    this.ctrlScores.innerHTML = snap.scores
+      .map(
+        (s) =>
+          `<div class="score-pill${s.active ? ' active' : ''}"><span class="score-swatch" style="background:${s.color}"></span><span>${s.name}</span><span>${s.score}</span></div>`,
+      )
+      .join('');
+  }
+
+  // ==================== Core Game Logic ====================
+
   private setTheme(theme: ThemeMode): void {
     this.theme = theme;
     document.documentElement.setAttribute('data-theme', theme);
@@ -529,17 +1126,14 @@ class GorillaPhysicsGame {
 
   private moveActiveGorilla(dir: -1 | 1): void {
     if (!this.canHumanControl()) return;
-    if (this.movesRemaining <= 0) {
-      soundEngine.playBlocked();
-      const active = this.players[this.activePlayerIndex];
-      if (active) {
-        this.spawnFloatingText(active.x, active.y - 68, 'No steps left this turn!', '#fed7aa', 0.9);
-      }
-      return;
-    }
-
     const active = this.players[this.activePlayerIndex];
     if (!active) return;
+
+    if (this.movesRemaining <= 0) {
+      soundEngine.playBlocked();
+      this.spawnFloatingText(active.x, active.y - 68, 'No steps left this turn!', '#fed7aa', 0.9);
+      return;
+    }
 
     const others = this.players
       .filter((p) => p.id !== active.id)
@@ -567,7 +1161,6 @@ class GorillaPhysicsGame {
 
     active.x = result.x;
     active.y = result.y;
-    active.buildingIndex = this.terrain.getBuildingIndexAt(active.x);
     this.movesRemaining--;
 
     soundEngine.playStep(result.dropped);
@@ -577,9 +1170,8 @@ class GorillaPhysicsGame {
     }
 
     this.updateMoveUI();
-    if (this.showSolution) {
-      this.refreshVerifiedSolution();
-    }
+    if (this.showSolution) this.refreshVerifiedSolution();
+    this.broadcastHostState();
   }
 
   private spawnDustPuff(x: number, y: number): void {
@@ -617,8 +1209,8 @@ class GorillaPhysicsGame {
 
     const planet = PLANETS[this.config.planetId];
     const origin = { x: active.x, y: active.y - GORILLA_HAND_OFFSET_Y };
+    const ownerHit = { x: active.x, y: active.y - 22 };
 
-    // Sort opponents so we check opponents in the active aim direction first
     const opponents = this.players
       .filter((p) => p.id !== active.id)
       .sort((a, b) => {
@@ -636,6 +1228,8 @@ class GorillaPhysicsGame {
         planet.gravity,
         this.windAccel,
         (x, y) => this.terrain.isSolid(x, y),
+        this.tires,
+        ownerHit,
       );
       if (sol) {
         this.verifiedSolution = { ...sol, targetPlayerId: opp.id };
@@ -658,13 +1252,12 @@ class GorillaPhysicsGame {
     const originY = active.y - GORILLA_HAND_OFFSET_Y;
 
     const dx = px - originX;
-    const dy = originY - py;
+    const dy = originY - py; // upward positive, negative allows aiming downward!
 
     const dir: ThrowDirection = dx >= 0 ? 1 : -1;
     const absDx = Math.max(4, Math.abs(dx));
-    const clampedDy = Math.max(4, dy);
-    const angle = Math.round(clamp(radToDeg(Math.atan2(clampedDy, absDx)), MIN_ANGLE, MAX_ANGLE));
-    const distPx = Math.hypot(dx, Math.max(0, dy));
+    const angle = Math.round(clamp(radToDeg(Math.atan2(dy, absDx)), MIN_ANGLE, MAX_ANGLE));
+    const distPx = Math.hypot(dx, dy);
     const speed = Math.round(clamp(distPx / 2.2, MIN_SPEED, MAX_SPEED));
 
     this.setAimDirection(dir);
@@ -679,30 +1272,31 @@ class GorillaPhysicsGame {
     this.btnDirRight.classList.toggle('active', dir === 1);
     const active = this.players[this.activePlayerIndex];
     if (active) active.preferredDirection = dir;
-    if (changed && this.showSolution) {
-      this.refreshVerifiedSolution();
-    }
+    if (changed && this.showSolution) this.refreshVerifiedSolution();
     this.updatePhysicsLabReadout();
+    this.broadcastHostState();
   }
 
   private setAimAngle(angle: number): void {
     const clamped = Math.round(clamp(Number.isFinite(angle) ? angle : 45, MIN_ANGLE, MAX_ANGLE));
     this.aimAngle = clamped;
-    this.inputAngle.value = String(clamped);
-    this.inputAngleNum.value = String(clamped);
+    this.angleSlider.setValue(clamped);
+    this.angleValLabel.textContent = `${clamped}°`;
     const active = this.players[this.activePlayerIndex];
     if (active) active.preferredAngle = clamped;
     this.updatePhysicsLabReadout();
+    this.broadcastHostState();
   }
 
   private setAimSpeed(speed: number): void {
     const clamped = Math.round(clamp(Number.isFinite(speed) ? speed : 40, MIN_SPEED, MAX_SPEED));
     this.aimSpeed = clamped;
-    this.inputSpeed.value = String(clamped);
-    this.inputSpeedNum.value = String(clamped);
+    this.speedSlider.setValue(clamped);
+    this.speedValLabel.textContent = `${clamped} m/s`;
     const active = this.players[this.activePlayerIndex];
     if (active) active.preferredSpeed = clamped;
     this.updatePhysicsLabReadout();
+    this.broadcastHostState();
   }
 
   private startMatch(): void {
@@ -721,40 +1315,44 @@ class GorillaPhysicsGame {
 
     const players: Player[] = [];
     for (let i = 0; i < this.config.humanCount; i++) {
-      const preset = PLAYER_PRESETS[i];
-      const name = this.config.playerNames[i] || preset.defaultName;
-      players.push(this.createPlayer(i, name, preset, false, 100, 400, 0));
+      const charId = this.config.playerCharacters[i] ?? DEFAULT_PLAYER_CHARACTERS[i];
+      const name = this.config.playerNames[i] || CHARACTERS[charId].name;
+      players.push(this.createPlayer(i, name, charId, false, 100, 400, 0));
     }
     if (this.config.humanCount === 1) {
-      players.push(this.createPlayer(1, BOT_PRESET.defaultName, BOT_PRESET, true, 900, 400, 1));
+      players.push(this.createPlayer(1, 'Robo-Kong', 'robo-kong', true, 900, 400, 1));
     }
     this.players = players;
 
-    this.setupRoundSkyline();
+    this.setupRoundLocation(undefined);
     this.beginPlayerTurn();
   }
 
-  private setupRoundSkyline(): void {
+  private setupRoundLocation(excludeLoc?: ConcreteLocationId): void {
     const planet = PLANETS[this.config.planetId];
     const seed = Date.now() ^ (this.currentRound * 9973);
     const roundSetup = generateSolvableRound(
       this.players.length,
       planet.gravity,
       this.config.planetId !== 'moon',
+      this.config.locationId,
+      this.config.enableTires,
       seed,
+      excludeLoc,
     );
 
     this.terrain = roundSetup.terrain;
+    this.currentLocationId = roundSetup.locationId;
+    this.tires = roundSetup.tires;
     this.windAccel = roundSetup.windAccel;
     this.renderer.invalidateBuildings();
     this.sunShocked = false;
 
     this.players.forEach((p, idx) => {
-      const bIdx = roundSetup.spawnIndices[idx];
-      const b = this.terrain.buildings[bIdx];
-      p.buildingIndex = bIdx;
-      p.x = Math.round(b.x + b.width / 2);
-      p.y = b.topY;
+      const pos = roundSetup.spawnPositions[idx];
+      p.zoneIndex = pos.zoneIndex;
+      p.x = pos.x;
+      p.y = pos.y;
       p.lastShot = null;
       p.animation = 'idle';
       p.preferredDirection = this.pickDefaultDirectionFor(p);
@@ -775,9 +1373,6 @@ class GorillaPhysicsGame {
     return dir;
   }
 
-  /**
-   * Starts a fresh turn for the active player (resetting their tries & step budget).
-   */
   private beginPlayerTurn(): void {
     this.triesRemaining = this.config.triesPerTurn;
     this.movesRemaining = MAX_MOVES_PER_TURN;
@@ -785,9 +1380,6 @@ class GorillaPhysicsGame {
     this.prepareAimStep(true);
   }
 
-  /**
-   * Prepares either the first try or a follow-up retry within the same player's turn.
-   */
   private prepareAimStep(isFirstTry: boolean): void {
     const active = this.players[this.activePlayerIndex];
     if (!active) return;
@@ -795,20 +1387,16 @@ class GorillaPhysicsGame {
     this.phase = 'aiming';
     this.banana = null;
     this.sunShocked = false;
-
-    for (const p of this.players) {
-      if (p.animation !== 'idle') {
-        p.animation = 'idle';
-      }
-    }
+    for (const p of this.players) p.animation = 'idle';
 
     this.setAimDirection(active.preferredDirection);
     this.setAimAngle(active.preferredAngle);
     this.setAimSpeed(active.preferredSpeed);
 
     const planet = PLANETS[this.config.planetId];
+    const loc = this.terrain.location;
     const tryNum = this.config.triesPerTurn - this.triesRemaining + 1;
-    this.roundBadge.textContent = `Round ${this.currentRound} / ${this.config.rounds}`;
+    this.roundBadge.textContent = `Round ${this.currentRound} / ${this.config.rounds} · ${loc.name}`;
     this.planetBadge.textContent = `${planet.name} · ${planet.gravity} m/s²`;
     this.triesBadge.textContent = `Try ${tryNum} / ${this.config.triesPerTurn}`;
     this.triesBadge.classList.toggle('hidden', this.config.triesPerTurn <= 1);
@@ -817,19 +1405,18 @@ class GorillaPhysicsGame {
     this.turnText.textContent = active.isBot
       ? `${active.name} is calculating try ${tryNum}...`
       : isFirstTry
-        ? `${active.name}'s turn — move (A/D) or aim & throw`
-        : `${active.name} — adjust from your ghost trail & try again!`;
+        ? `${active.name}'s turn — move or aim & throw!`
+        : `${active.name} — refine from your ghost trail!`;
 
     this.setControlsEnabled(!active.isBot);
     this.updateMoveUI();
     this.renderScoreboardStrip();
     this.updatePhysicsLabReadout();
 
-    if (this.showSolution) {
-      this.refreshVerifiedSolution();
-    } else {
-      this.verifiedSolution = null;
-    }
+    if (this.showSolution) this.refreshVerifiedSolution();
+    else this.verifiedSolution = null;
+
+    this.broadcastHostState();
 
     if (active.isBot) {
       this.botThinkTimer = isFirstTry ? 0.85 : 0.6;
@@ -841,10 +1428,11 @@ class GorillaPhysicsGame {
     this.btnMoveRight.disabled = !enabled || this.movesRemaining <= 0;
     this.btnDirLeft.disabled = !enabled;
     this.btnDirRight.disabled = !enabled;
-    this.inputAngle.disabled = !enabled;
-    this.inputAngleNum.disabled = !enabled;
-    this.inputSpeed.disabled = !enabled;
-    this.inputSpeedNum.disabled = !enabled;
+    this.angleSlider.setDisabled(!enabled);
+    this.speedSlider.setDisabled(!enabled);
+    this.controlsDock.querySelectorAll<HTMLButtonElement>('.step-btn').forEach((b) => {
+      b.disabled = !enabled;
+    });
     this.btnThrow.disabled = !enabled;
   }
 
@@ -868,7 +1456,7 @@ class GorillaPhysicsGame {
     const flatRange = theoreticalFlatRange(this.aimAngle, this.aimSpeed, planet.gravity);
 
     this.labVx.textContent = `${vx >= 0 ? '+' : ''}${vx.toFixed(1)} m/s`;
-    this.labVy.textContent = `+${vy.toFixed(1)} m/s`;
+    this.labVy.textContent = `${vy >= 0 ? '+' : ''}${vy.toFixed(1)} m/s`;
     this.labG.textContent = `${planet.gravity} m/s²`;
     this.labWind.textContent =
       Math.abs(this.windAccel) < 0.1
@@ -878,7 +1466,10 @@ class GorillaPhysicsGame {
     const active = this.players[this.activePlayerIndex];
     if (active?.lastShot) {
       const s = active.lastShot;
-      this.labLast.textContent = `${s.flightTime.toFixed(1)}s · Peak ${Math.round(s.apexMeters)}m · Dist ${Math.round(s.distanceMeters)}m`;
+      const bounceTag = s.bounces > 0 ? ` · ${s.bounces} bounce` : '';
+      this.labLast.textContent = `${s.flightTime.toFixed(1)}s · Peak ${Math.round(s.apexMeters)}m · Dist ${Math.round(s.distanceMeters)}m${bounceTag}`;
+    } else if (this.aimAngle <= 0) {
+      this.labLast.textContent = 'Downward / flat line drive';
     } else {
       this.labLast.textContent = `Est. calm flat range ~${Math.round(flatRange)}m`;
     }
@@ -916,6 +1507,8 @@ class GorillaPhysicsGame {
       elapsed: 0,
       spin: 0,
       ownerId: active.id,
+      hasClearedOwner: false,
+      bounces: 0,
       trail: [{ x: originX, y: originY }],
       maxApexMeters: Math.max(0, (WORLD_HEIGHT - originY) / PIXELS_PER_METER),
       hitSun: false,
@@ -924,6 +1517,7 @@ class GorillaPhysicsGame {
     this.phase = 'flying';
     this.setControlsEnabled(false);
     soundEngine.playThrow(this.theme);
+    this.broadcastHostState();
   }
 
   private executeBotTurn(): void {
@@ -945,6 +1539,7 @@ class GorillaPhysicsGame {
       this.windAccel,
       bot.botDifficulty,
       (x, y) => this.terrain.isSolid(x, y),
+      this.tires,
     );
 
     this.setAimDirection(solution.direction);
@@ -959,27 +1554,36 @@ class GorillaPhysicsGame {
     if (!b || !b.active) return;
 
     const planet = PLANETS[this.config.planetId];
-    const subSteps = 8;
+    const owner = this.players.find((p) => p.id === b.ownerId);
+    const ownerHit = owner ? { x: owner.x, y: owner.y - 22 } : null;
+
+    // Fine fixed sub-step matching simulateVerifiedShot (<= 0.006s)
+    const subSteps = Math.max(8, Math.ceil(dt / 0.005));
     const subDt = dt / subSteps;
 
     for (let s = 0; s < subSteps; s++) {
-      b.elapsed += subDt;
-      const pt = evaluateProjectilePosition(
-        { x: b.originX, y: b.originY },
-        b.vx,
-        b.vy,
+      const { bouncedTireId } = stepKinematicBody(
+        b,
+        subDt,
         planet.gravity,
         this.windAccel,
-        b.elapsed,
+        ownerHit,
+        this.tires,
       );
-      b.x = pt.x;
-      b.y = pt.y;
-      b.spin += subDt * 13 * b.direction;
+      b.spin += subDt * 13 * (b.vx >= 0 ? 1 : -1);
+
+      if (bouncedTireId !== null) {
+        const tire = this.tires.find((t) => t.id === bouncedTireId);
+        if (tire) {
+          tire.bounceAnim = 0.45;
+          soundEngine.playBoing();
+          this.spawnFloatingText(tire.x, tire.y - 34, 'BOING!', '#6ee7b7', 1.1);
+          this.spawnExplosionParticles(b.x, b.y, '#34d399', 14);
+        }
+      }
 
       const altMeters = (WORLD_HEIGHT - b.y) / PIXELS_PER_METER;
-      if (altMeters > b.maxApexMeters) {
-        b.maxApexMeters = altMeters;
-      }
+      if (altMeters > b.maxApexMeters) b.maxApexMeters = altMeters;
 
       const lastTrail = b.trail[b.trail.length - 1];
       if (!lastTrail || Math.hypot(b.x - lastTrail.x, b.y - lastTrail.y) >= 8) {
@@ -990,7 +1594,6 @@ class GorillaPhysicsGame {
       if (!b.hitSun && Math.hypot(b.x - SUN_X, b.y - SUN_Y) <= SUN_RADIUS + BANANA_RADIUS) {
         b.hitSun = true;
         this.sunShocked = true;
-        const owner = this.players.find((p) => p.id === b.ownerId);
         if (owner) {
           owner.sunBonks++;
           owner.score += SCORE_SUN_BONK;
@@ -1000,18 +1603,18 @@ class GorillaPhysicsGame {
         this.renderScoreboardStrip();
       }
 
-      // Check Gorilla Direct Hits
+      // Check Gorilla Direct Hits (clearance-armed self-hit prevents false self-blasts!)
       for (const p of this.players) {
-        if (p.id === b.ownerId && b.elapsed < SELF_HIT_GRACE_SEC) continue;
-        const gx = p.x;
-        const gy = p.y - 22;
-        if (Math.hypot(b.x - gx, b.y - gy) <= GORILLA_HIT_RADIUS + BANANA_RADIUS) {
+        if (p.id === b.ownerId && (!b.hasClearedOwner || b.elapsed < SELF_HIT_MIN_SEC)) {
+          continue;
+        }
+        if (Math.hypot(b.x - p.x, b.y - (p.y - 22)) <= GORILLA_HIT_RADIUS + BANANA_RADIUS) {
           this.resolveImpact(b.x, b.y, p);
           return;
         }
       }
 
-      // Check Building Collision
+      // Check Solid Terrain Collision
       if (b.y >= 0 && this.terrain.isSolid(b.x, b.y)) {
         this.resolveImpact(b.x, b.y, null);
         return;
@@ -1050,6 +1653,7 @@ class GorillaPhysicsGame {
         apexMeters: b.maxApexMeters,
         distanceMeters: Math.abs(b.x - b.originX) / PIXELS_PER_METER,
         flightTime: b.elapsed,
+        bounces: b.bounces,
         outcome: 'out',
       };
       this.labTip.textContent = generatePhysicsTip(
@@ -1059,11 +1663,15 @@ class GorillaPhysicsGame {
         this.windAccel,
         planet,
         'out',
+        b.bounces,
       );
     }
 
     this.triesRemaining--;
-    const retryNote = this.triesRemaining > 0 ? ` (${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left!)` : '';
+    const retryNote =
+      this.triesRemaining > 0
+        ? ` (${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left!)`
+        : '';
     this.showToast(
       (planet.id === 'moon' ? 'Banana floated into lunar orbit!' : 'Way over the skyline!') + retryNote,
       1.9,
@@ -1071,6 +1679,7 @@ class GorillaPhysicsGame {
     this.updatePhysicsLabReadout();
     this.phase = 'exploding';
     this.postShotTimer = 0.85;
+    this.broadcastHostState();
   }
 
   private resolveImpact(ix: number, iy: number, directTarget: Player | null): void {
@@ -1085,12 +1694,11 @@ class GorillaPhysicsGame {
 
     owner.maxApexMeters = Math.max(owner.maxApexMeters, b.maxApexMeters);
 
-    // Carve crater into skyscrapers
     const craterRadius = directTarget ? CRATER_RADIUS + 8 : CRATER_RADIUS;
     const pixelsDestroyed = this.terrain.carveCrater(ix, iy, craterRadius);
     owner.blocksDestroyed += pixelsDestroyed;
 
-    // Settle any gorillas whose footing got blasted
+    // Settle any gorilla whose ground got blasted away
     for (const p of this.players) {
       const groundY = this.terrain.getSurfaceY(p.x, Math.max(0, p.y - 6));
       if (groundY > p.y && groundY < WORLD_HEIGHT) {
@@ -1117,6 +1725,11 @@ class GorillaPhysicsGame {
 
         let gained = SCORE_DIRECT_HIT;
         const bonuses: string[] = [];
+        if (b.bounces > 0) {
+          owner.bankShotHits++;
+          gained += SCORE_BANK_SHOT_BONUS;
+          bonuses.push(`+${SCORE_BANK_SHOT_BONUS} Bank Shot!`);
+        }
         if (this.config.triesPerTurn > 1 && isFirstTryOfTurn) {
           gained += SCORE_FIRST_TRY_BONUS;
           bonuses.push(`+${SCORE_FIRST_TRY_BONUS} First Try!`);
@@ -1132,18 +1745,17 @@ class GorillaPhysicsGame {
 
         soundEngine.playGorillaHit(this.theme);
         this.triggerShake(10, 0.45);
-        this.spawnExplosionParticles(ix, iy, '#fde047', 54);
+        this.spawnExplosionParticles(ix, iy, '#fde047', 56);
         this.spawnFloatingText(ix, iy - 34, `DIRECT HIT! +${gained}`, '#fde047', 1.3);
         const bonusStr = bonuses.length > 0 ? ` (${bonuses.join(' ')})` : '';
-        this.showToast(`${owner.name} hit ${directTarget.name}! +${gained} pts${bonusStr}`, 2.4);
+        this.showToast(`${owner.name} hit ${directTarget.name}! +${gained} pts${bonusStr}`, 2.5);
       }
     } else {
       this.triesRemaining--;
       let splashedPlayer: Player | null = null;
       for (const p of this.players) {
         if (p.id === owner.id) continue;
-        const dist = Math.hypot(ix - p.x, iy - (p.y - 22));
-        if (dist <= SPLASH_RADIUS) {
+        if (Math.hypot(ix - p.x, iy - (p.y - 22)) <= SPLASH_RADIUS) {
           splashedPlayer = p;
           break;
         }
@@ -1158,7 +1770,10 @@ class GorillaPhysicsGame {
         this.triggerShake(7, 0.32);
         this.spawnExplosionParticles(ix, iy, '#fb923c', 38);
         this.spawnFloatingText(ix, iy - 26, `CLOSE CALL! +${SCORE_SPLASH_HIT}`, '#fed7aa', 1.15);
-        const retryNote = this.triesRemaining > 0 ? ` — ${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left to dial it in!` : '';
+        const retryNote =
+          this.triesRemaining > 0
+            ? ` — ${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left!`
+            : '';
         this.showToast(`Close splash near ${splashedPlayer.name}! +${SCORE_SPLASH_HIT} pts${retryNote}`, 2.2);
       } else {
         soundEngine.playBuildingHit(this.theme);
@@ -1166,8 +1781,8 @@ class GorillaPhysicsGame {
         this.spawnExplosionParticles(ix, iy, '#f97316', 28);
         if (this.triesRemaining > 0 && !owner.isBot) {
           this.showToast(
-            `Building blasted! ${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left — adjust using your ghost trail.`,
-            1.8,
+            `Impact! ${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left — adjust using your ghost trail.`,
+            1.7,
           );
         }
       }
@@ -1183,6 +1798,7 @@ class GorillaPhysicsGame {
       apexMeters: b.maxApexMeters,
       distanceMeters,
       flightTime: b.elapsed,
+      bounces: b.bounces,
       outcome,
     };
 
@@ -1193,43 +1809,46 @@ class GorillaPhysicsGame {
       this.windAccel,
       planet,
       outcome,
+      b.bounces,
     );
 
     this.renderScoreboardStrip();
     this.updatePhysicsLabReadout();
     this.phase = 'exploding';
     this.postShotTimer = outcome === 'hit' ? 1.5 : 0.8;
+    this.broadcastHostState();
   }
 
   private respawnHitGorillas(): void {
     if (this.pendingRespawnIds.length === 0) return;
 
     const planet = PLANETS[this.config.planetId];
-    const occupied = new Set(
-      this.players
-        .filter((p) => !this.pendingRespawnIds.includes(p.id))
-        .map((p) => p.buildingIndex),
-    );
+    const spots = this.terrain.location.spawnSpots;
 
     for (const id of this.pendingRespawnIds) {
       const p = this.players.find((pl) => pl.id === id);
       if (!p) continue;
-
       const others = this.players.filter((o) => o.id !== p.id);
-      const candidates = this.terrain.buildings
-        .map((_, idx) => idx)
-        .filter((idx) => !occupied.has(idx) && idx !== p.buildingIndex)
+
+      const candidates = spots
+        .map((s, idx) => ({
+          x: s.x,
+          y: this.terrain.getSurfaceY(s.x, Math.max(0, s.y - 24)),
+          idx,
+        }))
+        .filter(
+          (c) =>
+            c.y < WORLD_HEIGHT - 20 &&
+            Math.abs(c.x - p.x) > 80 &&
+            others.every((o) => Math.abs(c.x - o.x) > 85),
+        )
         .sort(() => Math.random() - 0.5);
 
-      // Prefer a rooftop that has a verified unobstructed shot to an opponent
-      let chosenIdx = candidates[0] ?? p.buildingIndex;
-      for (const idx of candidates) {
-        const b = this.terrain.buildings[idx];
-        const rx = Math.round(b.x + b.width / 2);
-        const ry = this.terrain.getSurfaceY(rx, Math.max(0, b.topY - 4));
-        if (ry >= WORLD_HEIGHT - 20) continue;
-        const origin = { x: rx, y: ry - GORILLA_HAND_OFFSET_Y };
-        const hasShot = others.some((o) =>
+      let chosen = candidates[0];
+      for (const c of candidates) {
+        const origin = { x: c.x, y: c.y - GORILLA_HAND_OFFSET_Y };
+        const ownerHit = { x: c.x, y: c.y - 22 };
+        const solvable = others.some((o) =>
           Boolean(
             findVerifiedSolution(
               origin,
@@ -1237,30 +1856,31 @@ class GorillaPhysicsGame {
               planet.gravity,
               this.windAccel,
               (x, y) => this.terrain.isSolid(x, y),
+              this.tires,
+              ownerHit,
             ),
           ),
         );
-        if (hasShot) {
-          chosenIdx = idx;
+        if (solvable) {
+          chosen = c;
           break;
         }
       }
 
-      const b = this.terrain.buildings[chosenIdx];
-      p.buildingIndex = chosenIdx;
-      p.x = Math.round(b.x + b.width / 2);
-      p.y = this.terrain.getSurfaceY(p.x, Math.max(0, b.topY - 4));
+      if (chosen) {
+        p.x = chosen.x;
+        p.y = chosen.y;
+        p.zoneIndex = chosen.idx;
+      }
       p.animation = 'idle';
       p.preferredDirection = this.pickDefaultDirectionFor(p);
-      occupied.add(chosenIdx);
-      this.spawnFloatingText(p.x, p.y - 60, `${p.name} hopped rooftops!`, '#ffffff', 0.95);
+      this.spawnFloatingText(p.x, p.y - 60, `${p.name} relocated!`, '#ffffff', 0.95);
     }
 
     this.pendingRespawnIds = [];
   }
 
   private afterShotComplete(): void {
-    // If the active player still has tries left and didn't already score a direct hit, stay on their turn!
     if (!this.turnEndedByHit && this.triesRemaining > 0) {
       this.prepareAimStep(false);
       return;
@@ -1277,8 +1897,9 @@ class GorillaPhysicsGame {
         this.finishMatch();
         return;
       }
-      this.setupRoundSkyline();
-      this.showToast(`Round ${this.currentRound} — New solvable skyline & fresh wind!`, 2.4);
+      this.setupRoundLocation(this.currentLocationId);
+      const loc = this.terrain.location;
+      this.showToast(`Round ${this.currentRound}: Welcome to ${loc.name}, ${loc.region}!`, 2.6);
     }
 
     this.beginPlayerTurn();
@@ -1296,10 +1917,11 @@ class GorillaPhysicsGame {
     this.gameoverWinnerLine.textContent =
       winners.length > 1
         ? `It's a tie between ${winners.map((w) => w.name).join(' & ')} with ${topScore} points!`
-        : `${winners[0].name} wins the skyline crown with ${topScore} points!`;
+        : `${winners[0].name} wins the crown with ${topScore} points!`;
 
     this.finalStandings.innerHTML = '';
     sorted.forEach((p, idx) => {
+      const ch = CHARACTERS[p.characterId];
       const row = document.createElement('div');
       row.className = `standing-row${p.score === topScore ? ' winner' : ''}`;
       row.innerHTML = `
@@ -1307,8 +1929,8 @@ class GorillaPhysicsGame {
           <span class="standing-rank">#${idx + 1}</span>
           <span class="name-swatch" style="background:${p.color}"></span>
           <div>
-            <div>${p.name}</div>
-            <div class="standing-meta">${p.hits} direct hit${p.hits === 1 ? '' : 's'} · ${p.splashHits} close call${p.splashHits === 1 ? '' : 's'}</div>
+            <div>${p.name} <span class="standing-meta">(${ch.name})</span></div>
+            <div class="standing-meta">${p.hits} hit${p.hits === 1 ? '' : 's'} · ${p.splashHits} close call${p.splashHits === 1 ? '' : 's'}${p.bankShotHits > 0 ? ` · ${p.bankShotHits} bank shot${p.bankShotHits === 1 ? '' : 's'}` : ''}</div>
           </div>
         </div>
         <span class="standing-score">${p.score} pts</span>
@@ -1332,6 +1954,7 @@ class GorillaPhysicsGame {
     }
 
     this.gameoverModal.classList.remove('hidden');
+    this.broadcastHostState();
   }
 
   private triggerShake(strength: number, duration: number): void {
@@ -1353,12 +1976,7 @@ class GorillaPhysicsGame {
         color: palette[Math.floor(Math.random() * palette.length)],
         life: 0.45 + Math.random() * 0.65,
         maxLife: 1.1,
-        shape:
-          this.theme === 'retro'
-            ? 'square'
-            : i % 5 === 0
-              ? 'peel'
-              : 'circle',
+        shape: this.theme === 'retro' ? 'square' : i % 5 === 0 ? 'peel' : 'circle',
         rotation: Math.random() * Math.PI * 2,
         vRot: (Math.random() - 0.5) * 10,
         gravityScale: 0.5 + Math.random() * 0.7,
@@ -1386,7 +2004,12 @@ class GorillaPhysicsGame {
   }
 
   private update(dt: number): void {
+    if (this.appMode === 'controller') return;
     this.timeSec += dt;
+
+    for (const tire of this.tires) {
+      if (tire.bounceAnim > 0) tire.bounceAnim = Math.max(0, tire.bounceAnim - dt);
+    }
 
     const windSpeedPx = this.windAccel * 24;
     for (const c of this.clouds) {
@@ -1403,9 +2026,7 @@ class GorillaPhysicsGame {
 
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;
-      if (this.toastTimer <= 0) {
-        this.toastBanner.classList.add('hidden');
-      }
+      if (this.toastTimer <= 0) this.toastBanner.classList.add('hidden');
     }
 
     if (this.shakeTimer > 0) {
@@ -1439,17 +2060,13 @@ class GorillaPhysicsGame {
       const active = this.players[this.activePlayerIndex];
       if (active?.isBot) {
         this.botThinkTimer -= dt;
-        if (this.botThinkTimer <= 0) {
-          this.executeBotTurn();
-        }
+        if (this.botThinkTimer <= 0) this.executeBotTurn();
       }
     } else if (this.phase === 'flying') {
       this.stepBanana(dt);
     } else if (this.phase === 'exploding') {
       this.postShotTimer -= dt;
-      if (this.postShotTimer <= 0) {
-        this.afterShotComplete();
-      }
+      if (this.postShotTimer <= 0) this.afterShotComplete();
     }
   }
 
@@ -1459,38 +2076,41 @@ class GorillaPhysicsGame {
 
     this.update(dt);
 
-    const shakeMag = this.shakeTimer > 0 ? this.shakeStrength * (this.shakeTimer / 0.45) : 0;
-    const shakeOffset =
-      shakeMag > 0.2
-        ? { x: (Math.random() * 2 - 1) * shakeMag, y: (Math.random() * 2 - 1) * shakeMag }
-        : { x: 0, y: 0 };
+    if (this.appMode !== 'controller') {
+      const shakeMag = this.shakeTimer > 0 ? this.shakeStrength * (this.shakeTimer / 0.45) : 0;
+      const shakeOffset =
+        shakeMag > 0.2
+          ? { x: (Math.random() * 2 - 1) * shakeMag, y: (Math.random() * 2 - 1) * shakeMag }
+          : { x: 0, y: 0 };
 
-    const planet = PLANETS[this.config.planetId];
-    this.renderer.render(this.ctx, {
-      theme: this.theme,
-      planetId: this.config.planetId,
-      gravity: planet.gravity,
-      windAccel: this.windAccel,
-      terrain: this.terrain,
-      players: this.players,
-      activePlayerIndex: this.activePlayerIndex,
-      aimAngle: this.aimAngle,
-      aimSpeed: this.aimSpeed,
-      aimDirection: this.aimDirection,
-      showAimHint: this.showAimHint,
-      showPhysicsLab: this.showPhysicsLab,
-      showSolution: this.showSolution,
-      verifiedSolution: this.verifiedSolution,
-      showAimingGuides: this.phase === 'aiming',
-      banana: this.banana,
-      sunShocked: this.sunShocked,
-      particles: this.particles,
-      floatingTexts: this.floatingTexts,
-      clouds: this.clouds,
-      windWisps: this.windWisps,
-      timeSec: this.timeSec,
-      shakeOffset,
-    });
+      const planet = PLANETS[this.config.planetId];
+      this.renderer.render(this.ctx, {
+        theme: this.theme,
+        planetId: this.config.planetId,
+        gravity: planet.gravity,
+        windAccel: this.windAccel,
+        terrain: this.terrain,
+        tires: this.tires,
+        players: this.players,
+        activePlayerIndex: this.activePlayerIndex,
+        aimAngle: this.aimAngle,
+        aimSpeed: this.aimSpeed,
+        aimDirection: this.aimDirection,
+        showAimHint: this.showAimHint,
+        showPhysicsLab: this.showPhysicsLab,
+        showSolution: this.showSolution,
+        verifiedSolution: this.verifiedSolution,
+        showAimingGuides: this.phase === 'aiming',
+        banana: this.banana,
+        sunShocked: this.sunShocked,
+        particles: this.particles,
+        floatingTexts: this.floatingTexts,
+        clouds: this.clouds,
+        windWisps: this.windWisps,
+        timeSec: this.timeSec,
+        shakeOffset,
+      });
+    }
 
     requestAnimationFrame((t) => this.loop(t));
   }
