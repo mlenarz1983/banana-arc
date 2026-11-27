@@ -1,26 +1,32 @@
-import type { PlanetId, PlanetPreset, PlayerPreset } from './types';
+import type { PlanetId, PlanetPreset } from './types';
 
 export const WORLD_WIDTH = 1200;
 export const WORLD_HEIGHT = 680;
-export const PIXELS_PER_METER = 6; // 200m wide skyline, ~113m tall
+export const PIXELS_PER_METER = 6; // 200m wide stage, ~113m tall
 
 export const GORILLA_WIDTH = 40;
 export const GORILLA_HEIGHT = 44;
-export const GORILLA_HIT_RADIUS = 23;
-export const GORILLA_HAND_OFFSET_Y = 30;
+export const GORILLA_HIT_RADIUS = 22;
+export const GORILLA_HAND_OFFSET_Y = 38; // launch cleanly above shoulder/head
+export const OWNER_CLEARANCE_RADIUS = 46; // banana must clear this before self-hit arms
 
 export const BANANA_RADIUS = 7;
 export const CRATER_RADIUS = 30;
 export const SPLASH_RADIUS = 56;
-export const SELF_HIT_GRACE_SEC = 0.28;
+export const SELF_HIT_MIN_SEC = 0.36;
 export const MAX_FLIGHT_SEC = 16;
 
-export const SUN_X = WORLD_WIDTH / 2;
-export const SUN_Y = 74;
-export const SUN_RADIUS = 34;
+export const TIRE_RADIUS = 24;
+export const TIRE_RESTITUTION = 0.94;
+export const MAX_TIRE_BOUNCES = 5;
 
-export const MIN_ANGLE = 5;
-export const MAX_ANGLE = 88;
+export const SUN_X = WORLD_WIDTH / 2;
+export const SUN_Y = 72;
+export const SUN_RADIUS = 32;
+
+// Expanded angle range: flat (0°) and downward (-30°) throws from high roofs!
+export const MIN_ANGLE = -30;
+export const MAX_ANGLE = 89;
 export const MIN_SPEED = 8;
 export const MAX_SPEED = 95;
 
@@ -29,11 +35,12 @@ export const SCORE_SPLASH_HIT = 40;
 export const SCORE_SUN_BONK = 15;
 export const SCORE_LONG_SHOT_BONUS = 25;
 export const SCORE_FIRST_TRY_BONUS = 25;
+export const SCORE_BANK_SHOT_BONUS = 20;
 export const LONG_SHOT_METERS = 95;
 
 export const MOVE_STEP_PX = 18;
 export const MAX_MOVES_PER_TURN = 8;
-export const MAX_CLIMB_PX = 3;
+export const MAX_CLIMB_PX = 4;
 
 export const PLANETS: Record<PlanetId, PlanetPreset> = {
   earth: {
@@ -67,37 +74,3 @@ export const PLANETS: Record<PlanetId, PlanetPreset> = {
 };
 
 export const PLANET_ORDER: PlanetId[] = ['earth', 'moon', 'mars', 'jupiter'];
-
-export const PLAYER_PRESETS: PlayerPreset[] = [
-  {
-    defaultName: 'Kong',
-    color: '#d9534f',
-    accentColor: '#ffd166',
-    hatStyle: 'bandana',
-  },
-  {
-    defaultName: 'Bongo',
-    color: '#2a9d8f',
-    accentColor: '#ffe066',
-    hatStyle: 'cap',
-  },
-  {
-    defaultName: 'Zuzu',
-    color: '#e76f51',
-    accentColor: '#ffffff',
-    hatStyle: 'crown',
-  },
-  {
-    defaultName: 'Momo',
-    color: '#3b82f6',
-    accentColor: '#fde047',
-    hatStyle: 'beanie',
-  },
-];
-
-export const BOT_PRESET: PlayerPreset = {
-  defaultName: 'Robo-Kong',
-  color: '#0ea5a4',
-  accentColor: '#fde047',
-  hatStyle: 'cap',
-};

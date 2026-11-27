@@ -4,15 +4,20 @@ import {
   MAX_ANGLE,
   MAX_FLIGHT_SEC,
   MAX_SPEED,
+  MAX_TIRE_BOUNCES,
   MIN_ANGLE,
   MIN_SPEED,
+  OWNER_CLEARANCE_RADIUS,
   PIXELS_PER_METER,
+  SELF_HIT_MIN_SEC,
+  TIRE_RESTITUTION,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from './constants';
 import type {
   Award,
   BotDifficulty,
+  BouncyTire,
   PlanetPreset,
   Player,
   ThrowDirection,
@@ -34,6 +39,7 @@ export function clamp(val: number, min: number, max: number): number {
 
 /**
  * Computes initial horizontal (vx) and vertical (vy, upward positive) velocity in m/s.
+ * Supports negative angles (downward throws from tall roofs).
  */
 export function computeVelocityComponents(
   angleDeg: number,
@@ -48,8 +54,7 @@ export function computeVelocityComponents(
 }
 
 /**
- * Computes exact projectile position in canvas pixels at time t (seconds).
- * Canvas Y increases downward, while physics vy and gravity use upward-positive Y.
+ * Analytical projectile position at time t (seconds) with no intermediate bounces.
  */
 export function evaluateProjectilePosition(
   origin: Vec2,
@@ -67,8 +72,74 @@ export function evaluateProjectilePosition(
   };
 }
 
+export interface KinematicBody {
+  x: number;
+  y: number;
+  vx: number; // m/s right+
+  vy: number; // m/s up+
+  elapsed: number;
+  hasClearedOwner: boolean;
+  bounces: number;
+}
+
 /**
- * Samples a trajectory curve for Aim Hint previews or trajectory verification.
+ * Exact constant-acceleration kinematic sub-step with elastic DK Bouncy Tire collisions.
+ * Shared by live gameplay, Aim Hint preview, and the Solution Verifier so all three agree 100%.
+ */
+export function stepKinematicBody(
+  body: KinematicBody,
+  dt: number,
+  gravity: number,
+  windAccel: number,
+  ownerHitCenter: Vec2 | null,
+  tires: readonly BouncyTire[],
+): { bouncedTireId: number | null } {
+  body.elapsed += dt;
+  body.x += (body.vx * dt + 0.5 * windAccel * dt * dt) * PIXELS_PER_METER;
+  body.y -= (body.vy * dt - 0.5 * gravity * dt * dt) * PIXELS_PER_METER;
+  body.vx += windAccel * dt;
+  body.vy -= gravity * dt;
+
+  // Arm self-hit ONLY after banana cleanly exits the thrower's clearance radius
+  if (!body.hasClearedOwner && ownerHitCenter) {
+    if (Math.hypot(body.x - ownerHitCenter.x, body.y - ownerHitCenter.y) >= OWNER_CLEARANCE_RADIUS) {
+      body.hasClearedOwner = true;
+    }
+  }
+
+  // Elastic circle reflection against DK Bouncy Tires
+  let bouncedTireId: number | null = null;
+  if (body.bounces < MAX_TIRE_BOUNCES) {
+    for (const tire of tires) {
+      const dx = body.x - tire.x;
+      const dy = body.y - tire.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = tire.radius + BANANA_RADIUS;
+      if (dist > 0.001 && dist <= minDist) {
+        const nx = dx / dist;
+        const ny = dy / dist; // canvas y-down
+        const pnx = nx;
+        const pny = -ny; // physics y-up
+        const dot = body.vx * pnx + body.vy * pny;
+        if (dot < 0) {
+          body.vx = (body.vx - 2 * dot * pnx) * TIRE_RESTITUTION;
+          body.vy = (body.vy - 2 * dot * pny) * TIRE_RESTITUTION;
+          body.x = tire.x + nx * (minDist + 1.5);
+          body.y = tire.y + ny * (minDist + 1.5);
+          body.bounces++;
+          body.hasClearedOwner = true; // after bouncing off a tire, boomerang self-hits are fair game!
+          bouncedTireId = tire.id;
+          break;
+        }
+      }
+    }
+  }
+
+  return { bouncedTireId };
+}
+
+/**
+ * Samples a trajectory curve (including elastic DK tire bounces!) for Aim Hint previews.
  */
 export function sampleTrajectory(
   origin: Vec2,
@@ -79,14 +150,38 @@ export function sampleTrajectory(
   windAccel: number,
   durationSec: number,
   stepSec = 0.04,
+  tires: readonly BouncyTire[] = [],
+  isSolidPixel?: (x: number, y: number) => boolean,
 ): Vec2[] {
   const { vx, vy } = computeVelocityComponents(angleDeg, speed, direction);
-  const points: Vec2[] = [];
-  for (let t = 0; t <= durationSec + 1e-6; t += stepSec) {
-    const pt = evaluateProjectilePosition(origin, vx, vy, gravity, windAccel, t);
-    points.push(pt);
-    if (pt.y > WORLD_HEIGHT + 40 || pt.x < -120 || pt.x > WORLD_WIDTH + 120) {
+  const body: KinematicBody = {
+    x: origin.x,
+    y: origin.y,
+    vx,
+    vy,
+    elapsed: 0,
+    hasClearedOwner: false,
+    bounces: 0,
+  };
+  const points: Vec2[] = [{ x: origin.x, y: origin.y }];
+  const subDt = 0.008;
+  let accum = 0;
+
+  while (body.elapsed < durationSec) {
+    const dt = Math.min(subDt, durationSec - body.elapsed);
+    stepKinematicBody(body, dt, gravity, windAccel, null, tires);
+    accum += dt;
+
+    if (isSolidPixel && body.y >= 0 && isSolidPixel(body.x, body.y)) {
+      points.push({ x: body.x, y: body.y });
       break;
+    }
+    if (body.y > WORLD_HEIGHT + 40 || body.x < -120 || body.x > WORLD_WIDTH + 120) {
+      break;
+    }
+    if (accum >= stepSec) {
+      points.push({ x: body.x, y: body.y });
+      accum = 0;
     }
   }
   return points;
@@ -100,13 +195,15 @@ export function theoreticalFlatRange(
   speed: number,
   gravity: number,
 ): number {
+  if (angleDeg <= 0) return 0;
   const rad = degToRad(angleDeg);
   return (speed * speed * Math.sin(2 * rad)) / gravity;
 }
 
 /**
- * Simulates an exact (angleDeg, speed, direction) launch with fine sub-steps to verify
- * whether it hits the target hitbox cleanly without colliding with any solid building pixel.
+ * Simulates an exact (angleDeg, speed, direction) launch using the EXACT same
+ * kinematic stepper, self-hit clearance check, tire bounces, and building collision
+ * rules as live gameplay.
  */
 export function simulateVerifiedShot(
   origin: Vec2,
@@ -117,45 +214,68 @@ export function simulateVerifiedShot(
   gravity: number,
   windAccel: number,
   isSolidPixel: (x: number, y: number) => boolean,
+  tires: readonly BouncyTire[] = [],
+  ownerHitCenter: Vec2 | null = { x: origin.x, y: origin.y + 16 },
   hitRadius = GORILLA_HIT_RADIUS + BANANA_RADIUS - 3,
-): { hit: boolean; flightTime: number; points: Vec2[] } {
+): { hit: boolean; selfHit: boolean; flightTime: number; bounces: number; points: Vec2[] } {
   const { vx, vy } = computeVelocityComponents(angleDeg, speed, direction);
-  const dt = 0.012;
+  const body: KinematicBody = {
+    x: origin.x,
+    y: origin.y,
+    vx,
+    vy,
+    elapsed: 0,
+    hasClearedOwner: false,
+    bounces: 0,
+  };
+
+  const dt = 0.006;
   const points: Vec2[] = [{ x: origin.x, y: origin.y }];
   let lastRecorded = points[0];
 
-  for (let t = dt; t <= MAX_FLIGHT_SEC; t += dt) {
-    const pt = evaluateProjectilePosition(origin, vx, vy, gravity, windAccel, t);
+  while (body.elapsed < MAX_FLIGHT_SEC) {
+    stepKinematicBody(body, dt, gravity, windAccel, ownerHitCenter, tires);
 
-    if (Math.hypot(pt.x - lastRecorded.x, pt.y - lastRecorded.y) >= 8) {
-      points.push(pt);
-      lastRecorded = pt;
+    if (Math.hypot(body.x - lastRecorded.x, body.y - lastRecorded.y) >= 8) {
+      points.push({ x: body.x, y: body.y });
+      lastRecorded = points[points.length - 1];
     }
 
-    // Check target hit first (matches game simulation order)
-    if (t >= 0.12 && Math.hypot(pt.x - target.x, pt.y - target.y) <= hitRadius) {
-      points.push(pt);
-      return { hit: true, flightTime: t, points };
+    // Check self-hit (identical to live gameplay!)
+    if (
+      ownerHitCenter &&
+      body.hasClearedOwner &&
+      body.elapsed >= SELF_HIT_MIN_SEC &&
+      Math.hypot(body.x - ownerHitCenter.x, body.y - ownerHitCenter.y) <=
+        GORILLA_HIT_RADIUS + BANANA_RADIUS
+    ) {
+      return { hit: false, selfHit: true, flightTime: body.elapsed, bounces: body.bounces, points };
     }
 
-    // Check building collision (allow tiny launch grace right near gorilla's hand)
-    if (t >= 0.04 && pt.y >= 0 && isSolidPixel(pt.x, pt.y)) {
-      return { hit: false, flightTime: t, points };
+    // Check target hit
+    if (Math.hypot(body.x - target.x, body.y - target.y) <= hitRadius) {
+      points.push({ x: body.x, y: body.y });
+      return { hit: true, selfHit: false, flightTime: body.elapsed, bounces: body.bounces, points };
+    }
+
+    // Check solid terrain collision (identical to live gameplay — no hidden grace mismatch!)
+    if (body.y >= 0 && isSolidPixel(body.x, body.y)) {
+      return { hit: false, selfHit: false, flightTime: body.elapsed, bounces: body.bounces, points };
     }
 
     // Out of bounds
-    if (pt.x < -120 || pt.x > WORLD_WIDTH + 120 || pt.y > WORLD_HEIGHT + 20) {
-      return { hit: false, flightTime: t, points };
+    if (body.x < -120 || body.x > WORLD_WIDTH + 120 || body.y > WORLD_HEIGHT + 20) {
+      return { hit: false, selfHit: false, flightTime: body.elapsed, bounces: body.bounces, points };
     }
   }
 
-  return { hit: false, flightTime: MAX_FLIGHT_SEC, points };
+  return { hit: false, selfHit: false, flightTime: MAX_FLIGHT_SEC, bounces: body.bounces, points };
 }
 
 /**
  * Searches for a verified unobstructed integer (angleDeg, speed, direction) launch
- * that hits `target` from `origin` under the given gravity and wind.
- * Returns null if no unobstructed integer solution exists.
+ * that hits `target` from `origin` under gravity, wind, terrain, and bouncy tires.
+ * Supports negative downward angles and verifies zero self-blast!
  */
 export function findVerifiedSolution(
   origin: Vec2,
@@ -163,6 +283,8 @@ export function findVerifiedSolution(
   gravity: number,
   windAccel: number,
   isSolidPixel: (x: number, y: number) => boolean,
+  tires: readonly BouncyTire[] = [],
+  ownerHitCenter: Vec2 | null = { x: origin.x, y: origin.y + 16 },
 ): VerifiedSolution | null {
   const dxMeters = (target.x - origin.x) / PIXELS_PER_METER;
   const dyMeters = (origin.y - target.y) / PIXELS_PER_METER; // upward positive
@@ -179,11 +301,11 @@ export function findVerifiedSolution(
 
   const candidates: ScoredCandidate[] = [];
 
-  for (let i = 0; i <= 120; i++) {
-    const T = 0.65 + (i / 120) * (maxT - 0.65);
+  // 1. Direct analytical sweep across flight times (covers downward, flat, and high arcs!)
+  for (let i = 0; i <= 125; i++) {
+    const T = 0.45 + (i / 125) * (maxT - 0.45);
     const vx = (dxMeters - 0.5 * windAccel * T * T) / T;
     const vy = (dyMeters + 0.5 * gravity * T * T) / T;
-    if (vy <= 1) continue;
 
     const rawSpeed = Math.hypot(vx, vy);
     if (rawSpeed < MIN_SPEED || rawSpeed > MAX_SPEED) continue;
@@ -192,7 +314,6 @@ export function findVerifiedSolution(
     const rawAngle = radToDeg(Math.atan2(vy, Math.abs(vx)));
     if (rawAngle < MIN_ANGLE || rawAngle > MAX_ANGLE) continue;
 
-    // Test nearest integer pairs around the analytical solution
     const baseA = Math.round(rawAngle);
     const baseS = Math.round(rawSpeed);
 
@@ -204,8 +325,9 @@ export function findVerifiedSolution(
         if (tried.has(key)) continue;
         tried.add(key);
 
-        // Prefer natural playable arcs (around 42-62 degrees, moderate speed)
-        const prefScore = Math.abs(a - 50) * 0.45 + s * 0.12 + (Math.abs(da) + Math.abs(ds)) * 2;
+        // Prefer natural playable arcs (around 35-62 degrees, moderate speed)
+        const prefScore =
+          Math.abs(a - 46) * 0.4 + s * 0.12 + (Math.abs(da) + Math.abs(ds)) * 2;
         candidates.push({ angleDeg: a, speed: s, direction, prefScore });
       }
     }
@@ -223,15 +345,60 @@ export function findVerifiedSolution(
       gravity,
       windAccel,
       isSolidPixel,
+      tires,
+      ownerHitCenter,
     );
-    if (sim.hit) {
+    if (sim.hit && !sim.selfHit) {
       return {
         angleDeg: cand.angleDeg,
         speed: cand.speed,
         direction: cand.direction,
         flightTime: sim.flightTime,
+        bounces: sim.bounces,
         points: sim.points,
       };
+    }
+  }
+
+  // 2. Fallback: try aiming at each bouncy tire to see if a bank shot unlocks a blocked spot
+  for (const tire of tires) {
+    const tdx = (tire.x - origin.x) / PIXELS_PER_METER;
+    const tdy = (origin.y - tire.y) / PIXELS_PER_METER;
+    for (let i = 0; i <= 24; i++) {
+      const T = 0.4 + (i / 24) * 3.5;
+      const vx = (tdx - 0.5 * windAccel * T * T) / T;
+      const vy = (tdy + 0.5 * gravity * T * T) / T;
+      const s = Math.round(Math.hypot(vx, vy));
+      if (s < MIN_SPEED || s > MAX_SPEED) continue;
+      const direction: ThrowDirection = vx >= 0 ? 1 : -1;
+      const a = Math.round(radToDeg(Math.atan2(vy, Math.abs(vx))));
+      if (a < MIN_ANGLE || a > MAX_ANGLE) continue;
+      const key = `${direction}:${a}:${s}`;
+      if (tried.has(key)) continue;
+      tried.add(key);
+
+      const sim = simulateVerifiedShot(
+        origin,
+        target,
+        a,
+        s,
+        direction,
+        gravity,
+        windAccel,
+        isSolidPixel,
+        tires,
+        ownerHitCenter,
+      );
+      if (sim.hit && !sim.selfHit) {
+        return {
+          angleDeg: a,
+          speed: s,
+          direction,
+          flightTime: sim.flightTime,
+          bounces: sim.bounces,
+          points: sim.points,
+        };
+      }
     }
   }
 
@@ -244,10 +411,6 @@ export interface BotSolution {
   direction: ThrowDirection;
 }
 
-/**
- * Solves a realistic ballistic trajectory from origin to target under gravity & wind,
- * checking that the arc clears intervening buildings, then adds difficulty-scaled noise.
- */
 export function solveBotShot(
   origin: Vec2,
   target: Vec2,
@@ -255,9 +418,10 @@ export function solveBotShot(
   windAccel: number,
   difficulty: BotDifficulty,
   isSolidPixel: (x: number, y: number) => boolean,
+  tires: readonly BouncyTire[] = [],
   rng: () => number = Math.random,
 ): BotSolution {
-  const verified = findVerifiedSolution(origin, target, gravity, windAccel, isSolidPixel);
+  const verified = findVerifiedSolution(origin, target, gravity, windAccel, isSolidPixel, tires);
 
   const dxMeters = (target.x - origin.x) / PIXELS_PER_METER;
   const defaultDir: ThrowDirection = dxMeters >= 0 ? 1 : -1;
@@ -274,7 +438,6 @@ export function solveBotShot(
         direction: defaultDir,
       };
 
-  // Apply human-like imperfection based on difficulty
   const spread =
     difficulty === 'easy'
       ? { angle: 7.0, speed: 7.0 }
@@ -291,9 +454,6 @@ export function solveBotShot(
   };
 }
 
-/**
- * Generates a short, kid-friendly physics tip explaining what just happened on a shot.
- */
 export function generatePhysicsTip(
   angleDeg: number,
   speed: number,
@@ -301,22 +461,29 @@ export function generatePhysicsTip(
   windAccel: number,
   planet: PlanetPreset,
   outcome: 'hit' | 'splash' | 'building' | 'self' | 'out',
+  bounces = 0,
 ): string {
   const isTailwind = windAccel * direction > 0.8;
   const isHeadwind = windAccel * direction < -0.8;
 
+  if (outcome === 'hit' && bounces > 0) {
+    return `Epic tire bank shot! Elastic collisions bounce at the same angle they arrive (angle of incidence = angle of reflection).`;
+  }
   if (outcome === 'self') {
-    return 'Straight-up throws (near 90°) go up and come right back down thanks to gravity!';
+    return 'Straight-up throws go up and come right back down onto your own head thanks to gravity!';
   }
   if (outcome === 'out' && planet.id === 'moon') {
     return `On the Moon (g = ${planet.gravity} m/s²), low gravity lets bananas soar over 6× farther than on Earth!`;
   }
   if (outcome === 'out') {
-    return 'Whoa, over the city! Reducing launch speed cuts range fast—doubling speed makes distance 4× farther.';
+    return 'Whoa, over the skyline! Reducing launch speed cuts range fast—doubling speed makes distance 4× farther.';
   }
   if (outcome === 'hit') {
+    if (angleDeg <= 0) {
+      return `Laser line drive (${angleDeg}°)! Throwing flat or downward from high ground uses gravity to drop straight onto lower targets.`;
+    }
     if (angleDeg >= 65) {
-      return `Awesome high lob (${angleDeg}°)! Steep angles trade horizontal speed (Vx) for height (Vy) to clear skyscrapers.`;
+      return `Awesome high lob (${angleDeg}°)! Steep angles trade horizontal speed (Vx) for height (Vy) to clear tall landmarks.`;
     }
     if (angleDeg >= 40 && angleDeg <= 50) {
       return `Textbook ${angleDeg}° launch! Near 45° balances Vx and Vy for maximum distance in calm air.`;
@@ -330,10 +497,13 @@ export function generatePhysicsTip(
     return `Direct hit at ${speed} m/s! Every throw follows a parabola shaped by gravity (${planet.gravity} m/s²).`;
   }
   if (outcome === 'splash') {
-    return 'So close! Watch your dotted ghost trail next turn and nudge angle or speed by just 2–3 units.';
+    return 'So close! Watch your dotted ghost trail and nudge angle or speed by just 2–3 units.';
   }
-  if (angleDeg < 32) {
-    return `Low ${angleDeg}° shots have lots of forward speed (Vx) but little lift (Vy)—try a higher angle to clear tall towers!`;
+  if (bounces > 0) {
+    return 'Boing! You clipped a DK Bouncy Tire—try aiming slightly higher or lower on the tire to steer the bank angle!';
+  }
+  if (angleDeg < 15) {
+    return `Flat ${angleDeg}° shots have lots of Vx and little upward lift—try aiming higher or bouncing off a sky tire!`;
   }
   if (isHeadwind) {
     return 'Watch that headwind! Wind pushes backward on Vx every second, so try a little more speed or a flatter arc.';
@@ -341,17 +511,26 @@ export function generatePhysicsTip(
   if (planet.id === 'jupiter') {
     return `Jupiter's gravity (${planet.gravity} m/s²) pulls bananas down 2.5× faster than Earth—crank up the speed!`;
   }
-  return 'Misses blast craters in buildings—next turn you can use your ghost trail to adjust, or tunnel right through!';
+  return 'Misses blast craters in terrain—adjust from your ghost trail, walk left/right, or try a bouncy tire bank shot!';
 }
 
-/**
- * Computes fun end-of-game awards from match statistics.
- */
 export function computeAwards(players: Player[]): Award[] {
   const awards: Award[] = [];
   if (players.length === 0) return awards;
 
-  // 1. Sun Bonker
+  const topBank = [...players].sort((a, b) => b.bankShotHits - a.bankShotHits)[0];
+  if (topBank && topBank.bankShotHits > 0) {
+    awards.push({
+      id: 'bank-shot',
+      title: 'Tire Trickshot',
+      subtitle: 'Bounced off a DK tire for a hit!',
+      badge: 'BOING',
+      winnerName: topBank.name,
+      winnerColor: topBank.color,
+      valueLabel: `${topBank.bankShotHits} bank hit${topBank.bankShotHits > 1 ? 's' : ''}`,
+    });
+  }
+
   const topSun = [...players].sort((a, b) => b.sunBonks - a.sunBonks)[0];
   if (topSun && topSun.sunBonks > 0) {
     awards.push({
@@ -365,7 +544,6 @@ export function computeAwards(players: Player[]): Award[] {
     });
   }
 
-  // 2. Sky-High Lobber
   const topApex = [...players].sort((a, b) => b.maxApexMeters - a.maxApexMeters)[0];
   if (topApex && topApex.maxApexMeters > 0) {
     awards.push({
@@ -379,13 +557,12 @@ export function computeAwards(players: Player[]): Award[] {
     });
   }
 
-  // 3. Demolition Crew
   const topDemo = [...players].sort((a, b) => b.blocksDestroyed - a.blocksDestroyed)[0];
   if (topDemo && topDemo.blocksDestroyed > 0) {
     awards.push({
       id: 'demolition',
       title: 'Demolition Crew',
-      subtitle: 'Most skyscraper chunks blasted',
+      subtitle: 'Most terrain chunks blasted',
       badge: 'BOOM',
       winnerName: topDemo.name,
       winnerColor: topDemo.color,
@@ -393,7 +570,6 @@ export function computeAwards(players: Player[]): Award[] {
     });
   }
 
-  // 4. Sharpshooter
   const topHits = [...players].sort((a, b) => b.hits - a.hits || b.score - a.score)[0];
   if (topHits && topHits.hits > 0) {
     awards.push({

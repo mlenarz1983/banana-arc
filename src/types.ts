@@ -6,7 +6,35 @@ export type BotDifficulty = 'easy' | 'normal' | 'clever';
 
 export type ThrowDirection = 1 | -1;
 
-export type HatStyle = 'bandana' | 'cap' | 'crown' | 'beanie';
+export type CharacterId =
+  | 'king-kong'
+  | 'astro-ape'
+  | 'prof-peel'
+  | 'capt-bongo'
+  | 'dj-kong'
+  | 'chef-nana'
+  | 'ninja-chimp'
+  | 'robo-kong';
+
+export type LocationId =
+  | 'random'
+  | 'nyc'
+  | 'chicago'
+  | 'san-francisco'
+  | 'seattle'
+  | 'atlanta'
+  | 'st-louis'
+  | 'paris'
+  | 'london'
+  | 'tokyo'
+  | 'sydney'
+  | 'cairo'
+  | 'rio'
+  | 'jungle'
+  | 'volcano'
+  | 'alps';
+
+export type ConcreteLocationId = Exclude<LocationId, 'random'>;
 
 export type GorillaAnimation = 'idle' | 'aiming' | 'throwing' | 'celebrate' | 'ouch';
 
@@ -17,6 +45,8 @@ export type GamePhase =
   | 'exploding'
   | 'round_summary'
   | 'game_over';
+
+export type AppMode = 'single' | 'tv-host' | 'controller';
 
 export interface Vec2 {
   x: number;
@@ -31,6 +61,26 @@ export interface PlanetPreset {
   defaultSpeed: number;
 }
 
+export interface CharacterDef {
+  id: CharacterId;
+  name: string;
+  title: string;
+  color: string;
+  accentColor: string;
+  furColor: string;
+  chestColor: string;
+}
+
+export interface BouncyTire {
+  id: number;
+  x: number;
+  y: number;
+  radius: number;
+  balloonColor: string;
+  phaseOffset: number;
+  bounceAnim: number; // >0 briefly after impact
+}
+
 export interface ShotRecord {
   originX: number;
   originY: number;
@@ -41,27 +91,28 @@ export interface ShotRecord {
   apexMeters: number;
   distanceMeters: number;
   flightTime: number;
+  bounces: number;
   outcome: 'hit' | 'splash' | 'building' | 'self' | 'out';
 }
 
 export interface Player {
   id: number;
   name: string;
+  characterId: CharacterId;
   color: string;
   accentColor: string;
-  hatStyle: HatStyle;
   isBot: boolean;
   botDifficulty: BotDifficulty;
   x: number;
-  y: number; // feet Y position on rooftop
-  buildingIndex: number;
+  y: number; // feet Y position on terrain surface
+  zoneIndex: number;
   score: number;
   hits: number;
   splashHits: number;
+  bankShotHits: number;
   sunBonks: number;
   maxApexMeters: number;
   blocksDestroyed: number;
-  directSnipes: number;
   shotsTaken: number;
   lastShot: ShotRecord | null;
   preferredAngle: number;
@@ -71,22 +122,61 @@ export interface Player {
   animationTimer: number;
 }
 
-export interface Building {
-  x: number;
-  width: number;
-  height: number;
-  topY: number;
-  colorIndex: number;
-  windowCols: number;
-  windowRows: number;
-  windowSeed: number;
-  roofStyle: 'flat' | 'antenna' | 'watertower' | 'stepped';
-}
-
 export interface Crater {
   x: number;
   y: number;
   radius: number;
+}
+
+export type TerrainShape =
+  | {
+      kind: 'rect';
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      colorIndex: number;
+      style?:
+        | 'building'
+        | 'spire'
+        | 'trunk'
+        | 'bridge-tower'
+        | 'bridge-deck'
+        | 'clock'
+        | 'dome'
+        | 'cylinder'
+        | 'xbrace'
+        | 'deck';
+      windowSeed?: number;
+      accent?: string;
+    }
+  | {
+      kind: 'poly';
+      points: Vec2[];
+      colorIndex: number;
+      style?: 'pyramid' | 'mountain' | 'snow-peak' | 'volcano' | 'sail' | 'canopy' | 'landmark' | 'spire';
+      accent?: string;
+    }
+  | {
+      kind: 'arch';
+      cx: number;
+      baseY: number;
+      outerRx: number;
+      outerRy: number;
+      thickness: number;
+      colorIndex: number;
+      style?: 'gateway-arch' | 'harbour-bridge';
+    };
+
+export interface LocationSpec {
+  id: ConcreteLocationId;
+  name: string;
+  region: string;
+  category: 'city' | 'wild';
+  skyMood: 'sunset' | 'twilight' | 'desert' | 'tropical' | 'volcanic' | 'alpine';
+  shapes: TerrainShape[];
+  spawnSpots: Vec2[]; // candidate rooftop/ledge landing spots (x, approxTopY)
+  backdrop?: 'mt-fuji' | 'mt-rainier' | 'lava-glow' | 'bay-water' | 'jungle-mist' | 'alpine-peaks';
 }
 
 export interface Banana {
@@ -103,6 +193,8 @@ export interface Banana {
   elapsed: number;
   spin: number;
   ownerId: number;
+  hasClearedOwner: boolean;
+  bounces: number;
   trail: Vec2[];
   maxApexMeters: number;
   hitSun: boolean;
@@ -166,6 +258,7 @@ export interface VerifiedSolution {
   speed: number;
   direction: ThrowDirection;
   flightTime: number;
+  bounces: number;
   targetPlayerId?: number;
   points: Vec2[];
 }
@@ -175,13 +268,47 @@ export interface GameConfig {
   rounds: number;
   triesPerTurn: number; // 1, 3, or 4
   planetId: PlanetId;
+  locationId: LocationId;
+  enableTires: boolean;
   botDifficulty: BotDifficulty;
   playerNames: string[];
+  playerCharacters: CharacterId[];
 }
 
-export interface PlayerPreset {
-  defaultName: string;
-  color: string;
-  accentColor: string;
-  hatStyle: HatStyle;
+export interface ControllerStateSnapshot {
+  type: 'state';
+  phase: GamePhase;
+  round: number;
+  totalRounds: number;
+  locationName: string;
+  planetName: string;
+  gravity: number;
+  windAccel: number;
+  activePlayerName: string;
+  activePlayerColor: string;
+  activeCharacterId: CharacterId;
+  activeIsBot: boolean;
+  triesLeft: number;
+  triesTotal: number;
+  movesLeft: number;
+  aimAngle: number;
+  aimSpeed: number;
+  aimDirection: ThrowDirection;
+  canControl: boolean;
+  showAimHint: boolean;
+  showSolution: boolean;
+  showPhysicsLab: boolean;
+  theme: ThemeMode;
+  muted: boolean;
+  scores: Array<{ name: string; color: string; score: number; active: boolean }>;
+  lastTip: string;
+  winnerText?: string;
 }
+
+export type ControllerCommand =
+  | { type: 'hello'; deviceName?: string }
+  | { type: 'aim'; angle?: number; speed?: number; direction?: ThrowDirection }
+  | { type: 'move'; dir: -1 | 1 }
+  | { type: 'throw' }
+  | { type: 'toggle'; key: 'theme' | 'hint' | 'solution' | 'lab' | 'sound' }
+  | { type: 'rematch' };

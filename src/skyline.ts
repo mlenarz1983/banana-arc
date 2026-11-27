@@ -1,11 +1,23 @@
 import {
   GORILLA_HAND_OFFSET_Y,
   MAX_CLIMB_PX,
+  SUN_X,
+  SUN_Y,
+  TIRE_RADIUS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from './constants';
+import { ALL_LOCATIONS, buildLocation } from './locations';
 import { findVerifiedSolution } from './physics';
-import type { Building, Crater, Vec2 } from './types';
+import type {
+  BouncyTire,
+  ConcreteLocationId,
+  Crater,
+  LocationId,
+  LocationSpec,
+  TerrainShape,
+  Vec2,
+} from './types';
 
 function createRng(seed: number): () => number {
   let s = seed >>> 0;
@@ -15,153 +27,110 @@ function createRng(seed: number): () => number {
   };
 }
 
-const ROOF_STYLES: Building['roofStyle'][] = ['flat', 'antenna', 'watertower', 'stepped'];
-
-/**
- * Generates a balanced procedural skyscraper skyline spanning [0, width].
- */
-export function generateSkyline(
-  width = WORLD_WIDTH,
-  height = WORLD_HEIGHT,
-  seed = Date.now(),
-  maxHeightCap = 365,
-): Building[] {
-  const rng = createRng(seed);
-  const buildings: Building[] = [];
-
-  const targetCount = 12;
-  const avgWidth = width / targetCount;
-  let cursorX = 0;
-
-  // Choose an interesting skyline silhouette pattern (valley, hill, or classic city)
-  const profile = Math.floor(rng() * 3);
-
-  for (let i = 0; i < targetCount; i++) {
-    const remaining = targetCount - i;
-    const isLast = remaining === 1;
-    const rawWidth = isLast
-      ? width - cursorX
-      : Math.round(avgWidth * (0.78 + rng() * 0.44));
-    const clampedWidth = isLast
-      ? width - cursorX
-      : Math.min(rawWidth, width - cursorX - (remaining - 1) * 68);
-
-    const t = i / (targetCount - 1); // 0..1 across screen
-    let minH = 140;
-    let maxH = Math.min(340, maxHeightCap);
-
-    if (profile === 0) {
-      // Taller in the middle (classic Gorillas arch challenge)
-      const centerBoost = Math.sin(t * Math.PI) * 105;
-      minH = 130 + centerBoost * 0.5;
-      maxH = Math.min(maxHeightCap, 260 + centerBoost);
-    } else if (profile === 1) {
-      // Stepped valley
-      const edgeBoost = Math.abs(t - 0.5) * 135;
-      minH = 135 + edgeBoost * 0.4;
-      maxH = Math.min(maxHeightCap, 255 + edgeBoost);
-    } else {
-      // Varied skyline
-      minH = 135;
-      maxH = Math.min(maxHeightCap, 350);
-    }
-
-    // Keep outer edge buildings slightly below extreme height so spawns feel open
-    if (i === 0 || i === targetCount - 1) {
-      maxH = Math.min(maxH, 285);
-    }
-
-    const effectiveMin = Math.min(minH, maxH - 20);
-    const bHeight = Math.round(effectiveMin + rng() * Math.max(1, maxH - effectiveMin));
-    const topY = height - bHeight;
-
-    const windowCols = Math.max(2, Math.floor((clampedWidth - 18) / 18));
-    const windowRows = Math.max(4, Math.floor((bHeight - 24) / 22));
-
-    buildings.push({
-      x: Math.round(cursorX),
-      width: Math.round(clampedWidth),
-      height: bHeight,
-      topY,
-      colorIndex: i % 4,
-      windowCols,
-      windowRows,
-      windowSeed: Math.floor(rng() * 100000),
-      roofStyle: ROOF_STYLES[Math.floor(rng() * ROOF_STYLES.length)],
-    });
-
-    cursorX += Math.round(clampedWidth);
+function pointInPolygon(x: number, y: number, pts: Vec2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x,
+      yi = pts[i].y;
+    const xj = pts[j].x,
+      yj = pts[j].y;
+    const intersect =
+      yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-9) + xi;
+    if (intersect) inside = !inside;
   }
-
-  return buildings;
+  return inside;
 }
 
 /**
- * Picks well-spaced building indices for 2-4 gorillas so everyone has room.
- */
-export function selectSpawnBuildings(
-  buildings: Building[],
-  playerCount: number,
-  rng: () => number = Math.random,
-): number[] {
-  const n = buildings.length;
-  if (playerCount <= 2) {
-    const leftIdx = 1 + Math.floor(rng() * 2); // building 1 or 2
-    const rightIdx = n - 2 - Math.floor(rng() * 2); // building n-2 or n-3
-    return [leftIdx, rightIdx];
-  }
-  if (playerCount === 3) {
-    const leftIdx = 1;
-    const midIdx = Math.floor(n / 2) + (rng() < 0.5 ? -1 : 0);
-    const rightIdx = n - 2;
-    return [leftIdx, midIdx, rightIdx];
-  }
-  // 4 players: spread across 4 zones
-  const step = (n - 2) / 3;
-  return [
-    1,
-    Math.round(1 + step),
-    Math.round(1 + step * 2),
-    n - 2,
-  ];
-}
-
-/**
- * Pixel-accurate destructible terrain collision mask backed by a Uint8Array.
- * Independent of Canvas DOM so it can be unit-tested in Node and shared across themes.
+ * Pixel-accurate destructible terrain collision mask supporting rectangles,
+ * polygons (pyramids, spires, mountains, sails), and hollow arches (Gateway Arch, bridges).
+ * Runs purely in TypeScript/Uint8Array so it works identically in Node tests and Browser Canvas!
  */
 export class SkylineTerrain {
   readonly width: number;
   readonly height: number;
-  buildings: Building[];
+  readonly location: LocationSpec;
   craters: Crater[] = [];
   private mask: Uint8Array;
 
-  constructor(
-    buildings: Building[],
-    width = WORLD_WIDTH,
-    height = WORLD_HEIGHT,
-  ) {
+  constructor(location: LocationSpec, width = WORLD_WIDTH, height = WORLD_HEIGHT) {
     this.width = width;
     this.height = height;
-    this.buildings = buildings;
+    this.location = location;
     this.mask = new Uint8Array(width * height);
     this.rebuildMask();
   }
 
   rebuildMask(): void {
     this.mask.fill(0);
-    for (const b of this.buildings) {
-      const startX = Math.max(0, Math.floor(b.x));
-      const endX = Math.min(this.width, Math.ceil(b.x + b.width));
-      const startY = Math.max(0, Math.floor(b.topY));
-      for (let y = startY; y < this.height; y++) {
-        const rowOffset = y * this.width;
-        this.mask.fill(1, rowOffset + startX, rowOffset + endX);
-      }
+    for (const shape of this.location.shapes) {
+      this.rasterizeShape(shape);
     }
     for (const c of this.craters) {
       this.applyCraterToMask(c.x, c.y, c.radius);
+    }
+  }
+
+  private rasterizeShape(shape: TerrainShape): void {
+    if (shape.kind === 'rect') {
+      const x0 = Math.max(0, Math.floor(shape.x));
+      const x1 = Math.min(this.width, Math.ceil(shape.x + shape.width));
+      const y0 = Math.max(0, Math.floor(shape.y));
+      const y1 = Math.min(this.height, Math.ceil(shape.y + shape.height));
+      for (let y = y0; y < y1; y++) {
+        this.mask.fill(1, y * this.width + x0, y * this.width + x1);
+      }
+      return;
+    }
+
+    if (shape.kind === 'poly') {
+      let minX = this.width,
+        maxX = 0,
+        minY = this.height,
+        maxY = 0;
+      for (const p of shape.points) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+      const x0 = Math.max(0, Math.floor(minX));
+      const x1 = Math.min(this.width - 1, Math.ceil(maxX));
+      const y0 = Math.max(0, Math.floor(minY));
+      const y1 = Math.min(this.height - 1, Math.ceil(maxY));
+      for (let y = y0; y <= y1; y++) {
+        const row = y * this.width;
+        for (let x = x0; x <= x1; x++) {
+          if (pointInPolygon(x + 0.5, y + 0.5, shape.points)) {
+            this.mask[row + x] = 1;
+          }
+        }
+      }
+      return;
+    }
+
+    if (shape.kind === 'arch') {
+      const innerRx = Math.max(10, shape.outerRx - shape.thickness);
+      const innerRy = Math.max(10, shape.outerRy - shape.thickness);
+      const x0 = Math.max(0, Math.floor(shape.cx - shape.outerRx));
+      const x1 = Math.min(this.width - 1, Math.ceil(shape.cx + shape.outerRx));
+      const y0 = Math.max(0, Math.floor(shape.baseY - shape.outerRy));
+      const y1 = Math.min(this.height - 1, Math.ceil(shape.baseY));
+      for (let y = y0; y <= y1; y++) {
+        const dy = shape.baseY - y;
+        const row = y * this.width;
+        for (let x = x0; x <= x1; x++) {
+          const dx = x - shape.cx;
+          const outVal =
+            (dx * dx) / (shape.outerRx * shape.outerRx) +
+            (dy * dy) / (shape.outerRy * shape.outerRy);
+          const inVal =
+            (dx * dx) / (innerRx * innerRx) + (dy * dy) / (innerRy * innerRy);
+          if (outVal <= 1 && inVal >= 1) {
+            this.mask[row + x] = 1;
+          }
+        }
+      }
     }
   }
 
@@ -191,17 +160,11 @@ export class SkylineTerrain {
     return destroyed;
   }
 
-  /**
-   * Carves a circular crater into the skyline and returns the number of solid pixels destroyed.
-   */
   carveCrater(cx: number, cy: number, radius: number): number {
     this.craters.push({ x: cx, y: cy, radius });
     return this.applyCraterToMask(cx, cy, radius);
   }
 
-  /**
-   * Returns true if the world pixel (x, y) is currently solid skyscraper masonry.
-   */
   isSolid(x: number, y: number): boolean {
     const ix = Math.round(x);
     const iy = Math.round(y);
@@ -211,9 +174,6 @@ export class SkylineTerrain {
     return this.mask[iy * this.width + ix] === 1;
   }
 
-  /**
-   * Finds the highest solid Y pixel at column x (or height if completely destroyed).
-   */
   getSurfaceY(x: number, startY = 0): number {
     const ix = Math.max(0, Math.min(this.width - 1, Math.round(x)));
     const sy = Math.max(0, Math.floor(startY));
@@ -225,107 +185,211 @@ export class SkylineTerrain {
     return this.height;
   }
 
-  /**
-   * Finds the building index covering horizontal coordinate x.
-   */
-  getBuildingIndexAt(x: number): number {
-    for (let i = 0; i < this.buildings.length; i++) {
-      const b = this.buildings[i];
-      if (x >= b.x && x < b.x + b.width) {
-        return i;
+  isClearCircle(cx: number, cy: number, radius: number): boolean {
+    for (let a = 0; a < 12; a++) {
+      const ang = (a / 12) * Math.PI * 2;
+      if (this.isSolid(cx + Math.cos(ang) * radius, cy + Math.sin(ang) * radius)) {
+        return false;
       }
     }
-    return Math.max(0, Math.min(this.buildings.length - 1, x < 0 ? 0 : this.buildings.length - 1));
+    return !this.isSolid(cx, cy);
   }
+}
+
+const BALLOON_COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6'];
+
+/**
+ * Places 1-2 floating DK Bouncy Tires in open sky space clear of terrain, gorillas, and the Sun.
+ */
+export function placeBouncyTires(
+  terrain: SkylineTerrain,
+  playerPositions: Vec2[],
+  rng: () => number,
+  enabled: boolean,
+): BouncyTire[] {
+  if (!enabled) return [];
+
+  const tires: BouncyTire[] = [];
+  const zones = [
+    { xMin: 260, xMax: 495, yMin: 140, yMax: 300 },
+    { xMin: 705, xMax: 940, yMin: 140, yMax: 300 },
+  ];
+
+  zones.forEach((zone, zIdx) => {
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const tx = Math.round(zone.xMin + rng() * (zone.xMax - zone.xMin));
+      const ty = Math.round(zone.yMin + rng() * (zone.yMax - zone.yMin));
+
+      if (Math.hypot(tx - SUN_X, ty - SUN_Y) < 95) continue;
+      if (playerPositions.some((p) => Math.hypot(tx - p.x, ty - (p.y - 24)) < 110)) continue;
+      if (!terrain.isClearCircle(tx, ty, TIRE_RADIUS + 26)) continue;
+      if (tires.some((other) => Math.hypot(tx - other.x, ty - other.y) < 140)) continue;
+
+      tires.push({
+        id: zIdx + 1,
+        x: tx,
+        y: ty,
+        radius: TIRE_RADIUS,
+        balloonColor: BALLOON_COLORS[(zIdx + Math.floor(rng() * 4)) % BALLOON_COLORS.length],
+        phaseOffset: rng() * Math.PI * 2,
+        bounceAnim: 0,
+      });
+      break;
+    }
+  });
+
+  return tires;
+}
+
+/**
+ * Picks well-spaced spawn positions on the location's rooftops/ledges for 2-4 players.
+ */
+export function selectSpawnPositions(
+  terrain: SkylineTerrain,
+  playerCount: number,
+  rng: () => number,
+): Array<{ x: number; y: number; zoneIndex: number }> {
+  const spots = terrain.location.spawnSpots
+    .map((s, idx) => {
+      const y = terrain.getSurfaceY(s.x, Math.max(0, s.y - 24));
+      return { x: s.x, y, zoneIndex: idx };
+    })
+    .filter((s) => s.y < terrain.height - 20 && s.y > 140);
+
+  // Pick evenly spread indices from left to right
+  const chosen: Array<{ x: number; y: number; zoneIndex: number }> = [];
+  if (spots.length >= playerCount) {
+    if (playerCount <= 2) {
+      const leftIdx = Math.floor(rng() * Math.min(2, spots.length - 1));
+      const rightIdx = spots.length - 1 - Math.floor(rng() * Math.min(2, spots.length - 1 - leftIdx));
+      chosen.push(spots[leftIdx], spots[rightIdx]);
+    } else {
+      for (let i = 0; i < playerCount; i++) {
+        const idx = Math.round((i / (playerCount - 1)) * (spots.length - 1));
+        chosen.push(spots[idx]);
+      }
+    }
+  } else {
+    // Fallback evenly spaced across width
+    for (let i = 0; i < playerCount; i++) {
+      const x = Math.round(120 + (i / Math.max(1, playerCount - 1)) * (WORLD_WIDTH - 240));
+      const y = terrain.getSurfaceY(x, 0);
+      chosen.push({ x, y: Math.min(y, WORLD_HEIGHT - 120), zoneIndex: i });
+    }
+  }
+
+  // Shuffle assignment across players so Player 1 doesn't always stand on the left
+  for (let i = chosen.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
+  }
+
+  return chosen;
 }
 
 export interface SolvableRoundSetup {
   terrain: SkylineTerrain;
-  spawnIndices: number[];
+  locationId: ConcreteLocationId;
+  spawnPositions: Array<{ x: number; y: number; zoneIndex: number }>;
+  tires: BouncyTire[];
   windAccel: number;
 }
 
 /**
- * Generates a skyline, spawn positions, and wind acceleration, verifying BEFORE returning
- * that every spawned gorilla has at least one unobstructed integer ballistic solution to an opponent.
+ * Generates a round for a specific or random iconic location, places DK Bouncy Tires,
+ * and verifies BEFORE returning that every spawned gorilla has an unobstructed integer
+ * ballistic solution (with zero self-blast!) to at least one opponent.
  */
 export function generateSolvableRound(
   playerCount: number,
   gravity: number,
   allowWind: boolean,
+  requestedLocation: LocationId = 'random',
+  enableTires = true,
   baseSeed = Date.now(),
+  excludeLocation?: ConcreteLocationId,
 ): SolvableRoundSetup {
-  const maxAttempts = 30;
+  const rngInit = createRng(baseSeed);
 
+  let chosenLocId: ConcreteLocationId;
+  if (requestedLocation === 'random') {
+    const pool = excludeLocation
+      ? ALL_LOCATIONS.filter((l) => l !== excludeLocation)
+      : ALL_LOCATIONS;
+    chosenLocId = pool[Math.floor(rngInit() * pool.length)];
+  } else {
+    chosenLocId = requestedLocation;
+  }
+
+  const locationSpec = buildLocation(chosenLocId);
+  const terrain = new SkylineTerrain(locationSpec);
+
+  const maxAttempts = 20;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const attemptSeed = (baseSeed + attempt * 7919) >>> 0;
     const rng = createRng(attemptSeed);
 
-    // Gradually relax max building height & wind if earlier rolls were too extreme
-    const heightCap = attempt < 12 ? 360 : attempt < 22 ? 285 : 225;
-    const windScale = attempt < 15 ? 3.2 : attempt < 24 ? 1.8 : 0;
-
-    const buildings = generateSkyline(WORLD_WIDTH, WORLD_HEIGHT, attemptSeed, heightCap);
-    const terrain = new SkylineTerrain(buildings);
-
+    const windScale = attempt < 10 ? 3.0 : attempt < 16 ? 1.5 : 0;
     let windAccel = 0;
     if (allowWind && windScale > 0) {
       const raw = (rng() * 2 - 1) * windScale;
       windAccel = Math.abs(raw) < 0.35 ? 0 : Math.round(raw * 10) / 10;
     }
 
-    const baseSpawns = selectSpawnBuildings(buildings, playerCount, rng);
-    // Shuffle spawns deterministically using rng
-    const spawnIndices = [...baseSpawns];
-    for (let i = spawnIndices.length - 1; i > 0; i--) {
-      const j = Math.floor(rng() * (i + 1));
-      [spawnIndices[i], spawnIndices[j]] = [spawnIndices[j], spawnIndices[i]];
-    }
+    const spawnPositions = selectSpawnPositions(terrain, playerCount, rng);
+    const tires = placeBouncyTires(terrain, spawnPositions, rng, enableTires && attempt < 16);
 
-    const positions = spawnIndices.map((bIdx) => {
-      const b = buildings[bIdx];
-      return {
-        x: Math.round(b.x + b.width / 2),
-        y: b.topY,
-      };
-    });
-
-    // Verify that EVERY gorilla has a verified unobstructed integer shot to at least one opponent
     let allSolvable = true;
-    for (let i = 0; i < positions.length; i++) {
-      const origin: Vec2 = { x: positions[i].x, y: positions[i].y - GORILLA_HAND_OFFSET_Y };
-      let hasAnyTarget = false;
-      for (let j = 0; j < positions.length; j++) {
+    for (let i = 0; i < spawnPositions.length; i++) {
+      const origin: Vec2 = {
+        x: spawnPositions[i].x,
+        y: spawnPositions[i].y - GORILLA_HAND_OFFSET_Y,
+      };
+      const ownerHit: Vec2 = {
+        x: spawnPositions[i].x,
+        y: spawnPositions[i].y - 22,
+      };
+      let hasTarget = false;
+      for (let j = 0; j < spawnPositions.length; j++) {
         if (i === j) continue;
-        const target: Vec2 = { x: positions[j].x, y: positions[j].y - 22 };
+        const target: Vec2 = {
+          x: spawnPositions[j].x,
+          y: spawnPositions[j].y - 22,
+        };
         const sol = findVerifiedSolution(
           origin,
           target,
           gravity,
           windAccel,
           (x, y) => terrain.isSolid(x, y),
+          tires,
+          ownerHit,
         );
         if (sol) {
-          hasAnyTarget = true;
+          hasTarget = true;
           break;
         }
       }
-      if (!hasAnyTarget) {
+      if (!hasTarget) {
         allSolvable = false;
         break;
       }
     }
 
     if (allSolvable) {
-      return { terrain, spawnIndices, windAccel };
+      return { terrain, locationId: chosenLocId, spawnPositions, tires, windAccel };
     }
   }
 
-  // Deterministic guaranteed-solvable fallback (flat moderate rooftops, zero wind)
-  const fallbackBuildings = generateSkyline(WORLD_WIDTH, WORLD_HEIGHT, baseSeed, 200);
-  const terrain = new SkylineTerrain(fallbackBuildings);
-  const spawnIndices = selectSpawnBuildings(fallbackBuildings, playerCount, () => 0.25);
-  return { terrain, spawnIndices, windAccel: 0 };
+  // Fallback: calm air, no obstructing tires
+  const fallbackSpawns = selectSpawnPositions(terrain, playerCount, () => 0.2);
+  return {
+    terrain,
+    locationId: chosenLocId,
+    spawnPositions: fallbackSpawns,
+    tires: [],
+    windAccel: 0,
+  };
 }
 
 export interface MoveResult {
@@ -337,10 +401,9 @@ export interface MoveResult {
 }
 
 /**
- * Moves a gorilla horizontally by `deltaX` pixels under the downhill-only rule:
- * - Cannot climb up a building wall (blocked if solid terrain rises > MAX_CLIMB_PX above feet)
- * - Can walk freely across flat rooftops and drop down onto lower roofs or crater floors
- * - Cannot walk off screen edges, into another gorilla, or into a bottomless pit
+ * Downhill-only rooftop/terrain movement:
+ * - Can walk across roofs, slopes (downhill or gentle <= MAX_CLIMB_PX), and drop down to lower levels
+ * - Cannot climb taller walls or steep cliffs
  */
 export function tryMoveGorilla(
   terrain: SkylineTerrain,
@@ -369,7 +432,6 @@ export function tryMoveGorilla(
       break;
     }
 
-    // Prevent stepping onto another gorilla
     let blockedByGorilla = false;
     for (const other of otherGorillas) {
       if (Math.abs(nextX - other.x) < 34 && Math.abs(y - other.y) < 40) {
@@ -382,7 +444,7 @@ export function tryMoveGorilla(
       break;
     }
 
-    // Check if there is a wall rising higher than MAX_CLIMB_PX above our feet (no climbing!)
+    // Check wall rising > MAX_CLIMB_PX above feet
     let hitWall = false;
     for (let checkY = y - MAX_CLIMB_PX - 1; checkY >= Math.max(0, y - 34); checkY -= 2) {
       if (terrain.isSolid(nextX, checkY)) {
@@ -395,7 +457,6 @@ export function tryMoveGorilla(
       break;
     }
 
-    // Find ground directly at or below feet (allowing up to MAX_CLIMB_PX smoothness for tiny crater edges)
     const groundY = terrain.getSurfaceY(nextX, Math.max(0, y - MAX_CLIMB_PX));
     if (groundY >= terrain.height - 4) {
       blockReason = 'pit';
@@ -419,4 +480,3 @@ export function tryMoveGorilla(
     reason: movedAny ? undefined : blockReason,
   };
 }
-

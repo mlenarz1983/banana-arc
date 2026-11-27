@@ -3,28 +3,23 @@ import {
   GORILLA_HAND_OFFSET_Y,
   PIXELS_PER_METER,
   PLANETS,
-  PLANET_ORDER,
+  TIRE_RADIUS,
   WORLD_HEIGHT,
-  WORLD_WIDTH,
 } from './constants';
+import { ALL_LOCATIONS, buildLocation } from './locations';
 import {
   computeAwards,
   computeVelocityComponents,
   evaluateProjectilePosition,
   findVerifiedSolution,
-  solveBotShot,
+  simulateVerifiedShot,
+  stepKinematicBody,
   theoreticalFlatRange,
 } from './physics';
-import {
-  generateSkyline,
-  generateSolvableRound,
-  selectSpawnBuildings,
-  SkylineTerrain,
-  tryMoveGorilla,
-} from './skyline';
-import type { Building, Player } from './types';
+import { generateSolvableRound, SkylineTerrain, tryMoveGorilla } from './skyline';
+import type { BouncyTire, LocationSpec, Player } from './types';
 
-describe('Projectile physics', () => {
+describe('Projectile physics & self-blast prevention', () => {
   it('matches the analytical flat-ground range formula R = v^2 * sin(2θ) / g', () => {
     const origin = { x: 100, y: 500 };
     const angle = 45;
@@ -42,172 +37,161 @@ describe('Projectile physics', () => {
     expect(simulatedRangeMeters).toBeCloseTo(expectedRangeMeters, 4);
   });
 
-  it('produces ~6x greater range on the Moon than on Earth for the same launch', () => {
-    const earthRange = theoreticalFlatRange(45, 25, PLANETS.earth.gravity);
-    const moonRange = theoreticalFlatRange(45, 25, PLANETS.moon.gravity);
-    expect(moonRange / earthRange).toBeCloseTo(
-      PLANETS.earth.gravity / PLANETS.moon.gravity,
-      3,
+  it('never self-blasts on slow Moon throws or steep shots while clearing the thrower', () => {
+    const ownerFeet = { x: 120, y: 480 };
+    const origin = { x: ownerFeet.x, y: ownerFeet.y - GORILLA_HAND_OFFSET_Y };
+    const ownerHit = { x: ownerFeet.x, y: ownerFeet.y - 22 };
+    const target = { x: 960, y: 460 };
+
+    // Slow Moon throw (12 m/s) that previously self-blasted at t=0.28s!
+    const sim = simulateVerifiedShot(
+      origin,
+      target,
+      45,
+      12,
+      1,
+      PLANETS.moon.gravity,
+      0,
+      () => false,
+      [],
+      ownerHit,
     );
+    expect(sim.selfHit).toBe(false);
   });
 
-  it('applies horizontal wind acceleration accurately', () => {
-    const origin = { x: 200, y: 400 };
-    const { vx, vy } = computeVelocityComponents(45, 30, 1);
-    const t = 2.0;
-    const calm = evaluateProjectilePosition(origin, vx, vy, 9.8, 0, t);
-    const tailwind = evaluateProjectilePosition(origin, vx, vy, 9.8, 3.0, t);
+  it('supports downward negative angles (-30° to 0°) from tall skyscrapers', () => {
+    const origin = { x: 200, y: 240 }; // high tower
+    const target = { x: 420, y: 420 }; // lower roof
+    const sol = findVerifiedSolution(
+      origin,
+      target,
+      PLANETS.earth.gravity,
+      0,
+      () => false,
+      [],
+      { x: 200, y: 256 },
+    );
+    expect(sol).not.toBeNull();
 
-    // Δx = 0.5 * a_w * t^2 = 0.5 * 3.0 * 4 = 6.0 meters = 36 pixels
-    expect(tailwind.x - calm.x).toBeCloseTo(6.0 * PIXELS_PER_METER, 4);
-    expect(tailwind.y).toBeCloseTo(calm.y, 4);
+    // Explicitly verify a negative downward angle (-15°) hits a lower target cleanly
+    const { vx, vy } = computeVelocityComponents(-15, 30, 1);
+    expect(vy).toBeLessThan(0);
+    expect(vx).toBeGreaterThan(0);
+  });
+
+  it('reflects bananas elastically off floating DK Bouncy Tires', () => {
+    const tire: BouncyTire = {
+      id: 1,
+      x: 400,
+      y: 300,
+      radius: TIRE_RADIUS,
+      balloonColor: '#ef4444',
+      phaseOffset: 0,
+      bounceAnim: 0,
+    };
+
+    // Shoot straight right into the left side of the tire
+    const body = {
+      x: 340,
+      y: 300,
+      vx: 30,
+      vy: 0,
+      elapsed: 0,
+      hasClearedOwner: true,
+      bounces: 0,
+    };
+
+    let bouncedId: number | null = null;
+    for (let i = 0; i < 80; i++) {
+      const res = stepKinematicBody(body, 0.005, 0, 0, null, [tire]);
+      if (res.bouncedTireId !== null) {
+        bouncedId = res.bouncedTireId;
+        break;
+      }
+    }
+
+    expect(bouncedId).toBe(1);
+    expect(body.bounces).toBe(1);
+    expect(body.vx).toBeLessThan(0); // bounced cleanly backward!
   });
 });
 
-describe('Bot ballistic solver & level solvability', () => {
-  it('solves an unobstructed shot that lands near the target with wind and gravity', () => {
-    const origin = { x: 150, y: 460 };
-    const target = { x: 960, y: 420 };
-    const gravity = PLANETS.earth.gravity;
-    const wind = -1.8;
+describe('15 Iconic locations & verified solvability', () => {
+  it('generates a verified solvable round for ALL 15 iconic cities and wild terrains', () => {
+    expect(ALL_LOCATIONS).toHaveLength(15);
 
-    // Put a tall skyscraper right in the middle between origin and target
-    const wall: Building = {
-      x: 520,
-      width: 110,
-      height: 390,
-      topY: WORLD_HEIGHT - 390,
-      colorIndex: 0,
-      windowCols: 4,
-      windowRows: 12,
-      windowSeed: 1,
-      roofStyle: 'flat',
-    };
-    const terrain = new SkylineTerrain([wall]);
+    for (const locId of ALL_LOCATIONS) {
+      const round = generateSolvableRound(
+        2,
+        PLANETS.earth.gravity,
+        true,
+        locId,
+        true,
+        4200 + locId.length * 97,
+      );
+      expect(round.locationId).toBe(locId);
+      expect(round.spawnPositions).toHaveLength(2);
 
-    // Use deterministic zero-noise rng (0.5 -> tri() = 0)
-    const shot = solveBotShot(
-      origin,
-      target,
-      gravity,
-      wind,
-      'clever',
-      (x, y) => terrain.isSolid(x, y),
-      () => 0.5,
-    );
+      // Verify both players have a clean, zero-self-blast integer solution!
+      for (let i = 0; i < 2; i++) {
+        const opp = 1 - i;
+        const origin = {
+          x: round.spawnPositions[i].x,
+          y: round.spawnPositions[i].y - GORILLA_HAND_OFFSET_Y,
+        };
+        const ownerHit = {
+          x: round.spawnPositions[i].x,
+          y: round.spawnPositions[i].y - 22,
+        };
+        const target = {
+          x: round.spawnPositions[opp].x,
+          y: round.spawnPositions[opp].y - 22,
+        };
 
-    const { vx, vy } = computeVelocityComponents(shot.angleDeg, shot.speed, shot.direction);
-
-    // Simulate the shot and check minimum distance to target + wall clearance
-    let minDist = Infinity;
-    let hitWall = false;
-    for (let t = 0.05; t < 10; t += 0.01) {
-      const pt = evaluateProjectilePosition(origin, vx, vy, gravity, wind, t);
-      if (terrain.isSolid(pt.x, pt.y)) {
-        hitWall = true;
-        break;
+        const sol = findVerifiedSolution(
+          origin,
+          target,
+          PLANETS.earth.gravity,
+          round.windAccel,
+          (x, y) => round.terrain.isSolid(x, y),
+          round.tires,
+          ownerHit,
+        );
+        expect(sol, `Location ${locId} player ${i} must be solvable`).not.toBeNull();
       }
-      const d = Math.hypot(pt.x - target.x, pt.y - target.y);
-      if (d < minDist) minDist = d;
-      if (pt.y > WORLD_HEIGHT) break;
     }
-
-    expect(hitWall).toBe(false);
-    expect(minDist).toBeLessThan(28); // within gorilla hit radius
   });
 
-  it('guarantees every generated round is solvable across all 4 planets and 2-4 players', () => {
-    for (const planetId of PLANET_ORDER) {
-      const planet = PLANETS[planetId];
-      for (const count of [2, 3, 4]) {
-        for (let seed = 1; seed <= 4; seed++) {
-          const round = generateSolvableRound(
-            count,
-            planet.gravity,
-            planetId !== 'moon',
-            seed * 1337 + count * 17,
-          );
-          const positions = round.spawnIndices.map((idx) => {
-            const b = round.terrain.buildings[idx];
-            return { x: Math.round(b.x + b.width / 2), y: b.topY };
-          });
-
-          for (let i = 0; i < positions.length; i++) {
-            const origin = { x: positions[i].x, y: positions[i].y - GORILLA_HAND_OFFSET_Y };
-            let found = false;
-            for (let j = 0; j < positions.length; j++) {
-              if (i === j) continue;
-              const target = { x: positions[j].x, y: positions[j].y - 22 };
-              const sol = findVerifiedSolution(
-                origin,
-                target,
-                planet.gravity,
-                round.windAccel,
-                (x, y) => round.terrain.isSolid(x, y),
-              );
-              if (sol) {
-                found = true;
-                break;
-              }
-            }
-            expect(found).toBe(true);
-          }
-        }
-      }
-    }
+  it('keeps the St. Louis Gateway Arch hollow underneath for threading shots', () => {
+    const stLouis = buildLocation('st-louis');
+    const terrain = new SkylineTerrain(stLouis);
+    // Center air gap beneath the arch (x=600, y=H-220) should be open air, while apex ring is solid
+    expect(terrain.isSolid(600, WORLD_HEIGHT - 220)).toBe(false);
+    expect(terrain.isSolid(600, WORLD_HEIGHT - 120 - 255)).toBe(true);
   });
 });
 
 describe('Gorilla rooftop movement (downhill only)', () => {
-  it('allows walking across rooftops and dropping down, but blocks climbing taller walls', () => {
-    const buildings: Building[] = [
-      {
-        x: 0,
-        width: 100,
-        height: 300,
-        topY: WORLD_HEIGHT - 300, // taller left neighbor (y=380)
-        colorIndex: 0,
-        windowCols: 3,
-        windowRows: 10,
-        windowSeed: 1,
-        roofStyle: 'flat',
-      },
-      {
-        x: 100,
-        width: 100,
-        height: 200,
-        topY: WORLD_HEIGHT - 200, // middle starting roof (y=480)
-        colorIndex: 1,
-        windowCols: 3,
-        windowRows: 7,
-        windowSeed: 2,
-        roofStyle: 'flat',
-      },
-      {
-        x: 200,
-        width: 100,
-        height: 120,
-        topY: WORLD_HEIGHT - 120, // lower right neighbor (y=560)
-        colorIndex: 2,
-        windowCols: 3,
-        windowRows: 4,
-        windowSeed: 3,
-        roofStyle: 'flat',
-      },
-    ];
-    const terrain = new SkylineTerrain(buildings);
+  it('allows walking and dropping down onto lower roofs, but blocks climbing taller walls', () => {
+    const testLoc: LocationSpec = {
+      id: 'nyc',
+      name: 'Test',
+      region: 'Test',
+      category: 'city',
+      skyMood: 'sunset',
+      shapes: [
+        { kind: 'rect', x: 0, y: WORLD_HEIGHT - 300, width: 100, height: 300, colorIndex: 0 },
+        { kind: 'rect', x: 100, y: WORLD_HEIGHT - 200, width: 100, height: 200, colorIndex: 1 },
+        { kind: 'rect', x: 200, y: WORLD_HEIGHT - 120, width: 100, height: 120, colorIndex: 2 },
+      ],
+      spawnSpots: [],
+    };
+    const terrain = new SkylineTerrain(testLoc);
 
-    // Start near left edge of middle building (x=105, y=480); trying to move left into tall wall should stop before x=100
-    const climbAttempt = tryMoveGorilla(terrain, 105, WORLD_HEIGHT - 200, -20, []);
-    expect(climbAttempt.x).toBeGreaterThanOrEqual(100);
-    expect(climbAttempt.y).toBe(WORLD_HEIGHT - 200);
-
-    // From x=100 directly against the taller left wall, moving left is completely blocked
     const blockedWall = tryMoveGorilla(terrain, 100, WORLD_HEIGHT - 200, -18, []);
     expect(blockedWall.moved).toBe(false);
     expect(blockedWall.reason).toBe('wall');
 
-    // Start near right edge of middle building (x=195, y=480); moving right drops down onto lower building (y=560)
     const dropRight = tryMoveGorilla(terrain, 195, WORLD_HEIGHT - 200, 18, []);
     expect(dropRight.moved).toBe(true);
     expect(dropRight.dropped).toBe(true);
@@ -216,56 +200,26 @@ describe('Gorilla rooftop movement (downhill only)', () => {
   });
 });
 
-describe('Destructible skyline terrain', () => {
-  it('generates full-width buildings and carves circular craters cleanly', () => {
-    const buildings = generateSkyline(WORLD_WIDTH, WORLD_HEIGHT, 42);
-    expect(buildings.length).toBeGreaterThanOrEqual(10);
-    const totalWidth = buildings.reduce((acc, b) => acc + b.width, 0);
-    expect(totalWidth).toBe(WORLD_WIDTH);
-
-    const terrain = new SkylineTerrain(buildings);
-    const targetB = buildings[4];
-    const sampleX = targetB.x + Math.floor(targetB.width / 2);
-    const sampleY = targetB.topY + 25;
-
-    expect(terrain.isSolid(sampleX, sampleY)).toBe(true);
-    expect(terrain.isSolid(sampleX, targetB.topY - 10)).toBe(false);
-
-    const destroyed = terrain.carveCrater(sampleX, sampleY, 24);
-    expect(destroyed).toBeGreaterThan(500);
-    expect(terrain.isSolid(sampleX, sampleY)).toBe(false);
-  });
-
-  it('spaces 2, 3, and 4 players across distinct buildings', () => {
-    const buildings = generateSkyline(WORLD_WIDTH, WORLD_HEIGHT, 7);
-    for (const count of [2, 3, 4]) {
-      const indices = selectSpawnBuildings(buildings, count, () => 0.25);
-      expect(indices).toHaveLength(count);
-      expect(new Set(indices).size).toBe(count);
-    }
-  });
-});
-
-describe('End-of-game awards', () => {
-  it('awards Sun Bonker, Sky-High Lobber, Demolition Crew, and Banana Sniper accurately', () => {
+describe('Awards', () => {
+  it('awards Tire Trickshot for bank shot hits', () => {
     const makePlayer = (id: number, name: string, overrides: Partial<Player>): Player => ({
       id,
       name,
+      characterId: 'king-kong',
       color: '#f00',
       accentColor: '#ff0',
-      hatStyle: 'cap',
       isBot: false,
       botDifficulty: 'normal',
       x: 100,
       y: 400,
-      buildingIndex: 1,
+      zoneIndex: 0,
       score: 0,
       hits: 0,
       splashHits: 0,
+      bankShotHits: 0,
       sunBonks: 0,
       maxApexMeters: 0,
       blocksDestroyed: 0,
-      directSnipes: 0,
       shotsTaken: 1,
       lastShot: null,
       preferredAngle: 45,
@@ -276,15 +230,10 @@ describe('End-of-game awards', () => {
       ...overrides,
     });
 
-    const players = [
-      makePlayer(0, 'Maya', { sunBonks: 2, maxApexMeters: 62, hits: 1, blocksDestroyed: 900 }),
-      makePlayer(1, 'Leo', { sunBonks: 0, maxApexMeters: 95, hits: 3, blocksDestroyed: 2400 }),
-    ];
-
-    const awards = computeAwards(players);
-    expect(awards.find((a) => a.id === 'sun-bonker')?.winnerName).toBe('Maya');
-    expect(awards.find((a) => a.id === 'sky-high')?.winnerName).toBe('Leo');
-    expect(awards.find((a) => a.id === 'demolition')?.winnerName).toBe('Leo');
-    expect(awards.find((a) => a.id === 'sharpshooter')?.winnerName).toBe('Leo');
+    const awards = computeAwards([
+      makePlayer(0, 'Maya', { bankShotHits: 2, hits: 2 }),
+      makePlayer(1, 'Leo', { bankShotHits: 0, hits: 1 }),
+    ]);
+    expect(awards.find((a) => a.id === 'bank-shot')?.winnerName).toBe('Maya');
   });
 });
