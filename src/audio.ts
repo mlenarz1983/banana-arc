@@ -238,6 +238,28 @@ class SoundEngine {
     osc.start(now);
     osc.stop(now + 0.11);
   }
+
+  playBoing(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(160, now);
+    osc.frequency.exponentialRampToValueAtTime(520, now + 0.12);
+    osc.frequency.exponentialRampToValueAtTime(280, now + 0.24);
+    osc.frequency.exponentialRampToValueAtTime(410, now + 0.34);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.22, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.37);
+  }
 }
 
 export const soundEngine = new SoundEngine();
