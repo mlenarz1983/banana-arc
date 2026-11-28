@@ -71,14 +71,19 @@ export interface CharacterDef {
   chestColor: string;
 }
 
-export interface BouncyTire {
+/**
+ * A player-placed flat Physics Lab Mirror Panel for elastic bank shots (θ_i = θ_r).
+ */
+export interface MirrorPanel {
   id: number;
-  x: number;
-  y: number;
-  radius: number;
-  balloonColor: string;
-  phaseOffset: number;
-  bounceAnim: number; // >0 briefly after impact
+  x: number; // center X in world px
+  y: number; // center Y in world px
+  halfLength: number; // half width along surface
+  angleDeg: number; // tilt in degrees (-80..80, 0 = horizontal flat mirror)
+  ownerId: number;
+  ownerColor: string;
+  locked: boolean; // false while player is positioning/tilting it
+  bounceAnim: number; // >0 briefly after impact flash
 }
 
 export interface ShotRecord {
@@ -128,6 +133,41 @@ export interface Crater {
   radius: number;
 }
 
+export type RectStyle =
+  | 'building'
+  | 'spire'
+  | 'beacon-spire'
+  | 'trunk'
+  | 'bridge-tower'
+  | 'bridge-deck'
+  | 'clock'
+  | 'dome'
+  | 'cylinder'
+  | 'glass-cylinder'
+  | 'corncob'
+  | 'xbrace'
+  | 'twin-crown'
+  | 'gold-crown'
+  | 'deck'
+  | 'bean';
+
+export type PolyStyle =
+  | 'pyramid'
+  | 'mountain'
+  | 'snow-peak'
+  | 'volcano'
+  | 'sail'
+  | 'canopy'
+  | 'landmark'
+  | 'spire'
+  | 'xbrace-taper'
+  | 'gold-lattice'
+  | 'eiffel-lattice'
+  | 'diamond-roof'
+  | 'shard'
+  | 'gherkin'
+  | 'transamerica';
+
 export type TerrainShape =
   | {
       kind: 'rect';
@@ -136,17 +176,7 @@ export type TerrainShape =
       width: number;
       height: number;
       colorIndex: number;
-      style?:
-        | 'building'
-        | 'spire'
-        | 'trunk'
-        | 'bridge-tower'
-        | 'bridge-deck'
-        | 'clock'
-        | 'dome'
-        | 'cylinder'
-        | 'xbrace'
-        | 'deck';
+      style?: RectStyle;
       windowSeed?: number;
       accent?: string;
     }
@@ -154,7 +184,7 @@ export type TerrainShape =
       kind: 'poly';
       points: Vec2[];
       colorIndex: number;
-      style?: 'pyramid' | 'mountain' | 'snow-peak' | 'volcano' | 'sail' | 'canopy' | 'landmark' | 'spire';
+      style?: PolyStyle;
       accent?: string;
     }
   | {
@@ -165,8 +195,19 @@ export type TerrainShape =
       outerRy: number;
       thickness: number;
       colorIndex: number;
-      style?: 'gateway-arch' | 'harbour-bridge';
+      style?: 'gateway-arch' | 'harbour-bridge' | 'eiffel-base';
     };
+
+export interface CableSpan {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  sag: number;
+  color: string;
+  suspenderCount?: number;
+  deckY?: number;
+}
 
 export interface LocationSpec {
   id: ConcreteLocationId;
@@ -175,16 +216,17 @@ export interface LocationSpec {
   category: 'city' | 'wild';
   skyMood: 'sunset' | 'twilight' | 'desert' | 'tropical' | 'volcanic' | 'alpine';
   shapes: TerrainShape[];
-  spawnSpots: Vec2[]; // candidate rooftop/ledge landing spots (x, approxTopY)
-  backdrop?: 'mt-fuji' | 'mt-rainier' | 'lava-glow' | 'bay-water' | 'jungle-mist' | 'alpine-peaks';
+  cables?: CableSpan[]; // decorative bridge suspension cables (non-colliding)
+  spawnSpots: Vec2[];
+  backdrop?: 'mt-fuji' | 'mt-rainier' | 'lava-glow' | 'bay-water' | 'jungle-mist' | 'alpine-peaks' | 'lake-michigan' | 'city-depth';
 }
 
 export interface Banana {
   active: boolean;
   x: number;
   y: number;
-  vx: number; // m/s (right is +)
-  vy: number; // m/s (up is +)
+  vx: number;
+  vy: number;
   originX: number;
   originY: number;
   angleDeg: number;
@@ -264,12 +306,12 @@ export interface VerifiedSolution {
 }
 
 export interface GameConfig {
-  humanCount: number; // 1..4 (when 1, Robo-Kong joins as Player 2)
+  humanCount: number;
   rounds: number;
-  triesPerTurn: number; // 1, 3, or 4
+  triesPerTurn: number;
   planetId: PlanetId;
   locationId: LocationId;
-  enableTires: boolean;
+  enableMirrors: boolean;
   botDifficulty: BotDifficulty;
   playerNames: string[];
   playerCharacters: CharacterId[];
@@ -295,6 +337,9 @@ export interface ControllerStateSnapshot {
   aimSpeed: number;
   aimDirection: ThrowDirection;
   canControl: boolean;
+  canPlaceMirror: boolean;
+  mirrorCount: number;
+  draftMirror: { x: number; y: number; angleDeg: number } | null;
   showAimHint: boolean;
   showSolution: boolean;
   showPhysicsLab: boolean;
@@ -309,6 +354,10 @@ export type ControllerCommand =
   | { type: 'hello'; deviceName?: string }
   | { type: 'aim'; angle?: number; speed?: number; direction?: ThrowDirection }
   | { type: 'move'; dir: -1 | 1 }
+  | { type: 'mirror_start' }
+  | { type: 'mirror_update'; x?: number; y?: number; angleDeg?: number }
+  | { type: 'mirror_lock' }
+  | { type: 'mirror_cancel' }
   | { type: 'throw' }
   | { type: 'toggle'; key: 'theme' | 'hint' | 'solution' | 'lab' | 'sound' }
   | { type: 'rematch' };

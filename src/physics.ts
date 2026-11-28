@@ -1,23 +1,26 @@
 import {
   BANANA_RADIUS,
+  GORILLA_HAND_OFFSET_Y,
+  GORILLA_HIT_CENTER_Y,
   GORILLA_HIT_RADIUS,
   MAX_ANGLE,
   MAX_FLIGHT_SEC,
+  MAX_MIRROR_BOUNCES,
   MAX_SPEED,
-  MAX_TIRE_BOUNCES,
   MIN_ANGLE,
   MIN_SPEED,
+  MIRROR_HALF_THICKNESS,
+  MIRROR_RESTITUTION,
   OWNER_CLEARANCE_RADIUS,
   PIXELS_PER_METER,
   SELF_HIT_MIN_SEC,
-  TIRE_RESTITUTION,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from './constants';
 import type {
   Award,
   BotDifficulty,
-  BouncyTire,
+  MirrorPanel,
   PlanetPreset,
   Player,
   ThrowDirection,
@@ -39,7 +42,6 @@ export function clamp(val: number, min: number, max: number): number {
 
 /**
  * Computes initial horizontal (vx) and vertical (vy, upward positive) velocity in m/s.
- * Supports negative angles (downward throws from tall roofs).
  */
 export function computeVelocityComponents(
   angleDeg: number,
@@ -72,6 +74,22 @@ export function evaluateProjectilePosition(
   };
 }
 
+/**
+ * Computes the two endpoints (A, B) of a flat MirrorPanel in canvas coordinates.
+ * angleDeg = 0 is horizontal; positive angle tilts up-right (counter-clockwise in physics).
+ */
+export function getMirrorEndpoints(mirror: MirrorPanel): { a: Vec2; b: Vec2; tx: number; ty: number } {
+  const rad = degToRad(mirror.angleDeg);
+  const tx = Math.cos(rad);
+  const ty = -Math.sin(rad); // canvas Y is downward
+  return {
+    a: { x: mirror.x - tx * mirror.halfLength, y: mirror.y - ty * mirror.halfLength },
+    b: { x: mirror.x + tx * mirror.halfLength, y: mirror.y + ty * mirror.halfLength },
+    tx,
+    ty,
+  };
+}
+
 export interface KinematicBody {
   x: number;
   y: number;
@@ -83,7 +101,8 @@ export interface KinematicBody {
 }
 
 /**
- * Exact constant-acceleration kinematic sub-step with elastic DK Bouncy Tire collisions.
+ * Exact constant-acceleration kinematic sub-step with specular reflection (θ_i = θ_r)
+ * against flat Physics Lab Mirror Panels.
  * Shared by live gameplay, Aim Hint preview, and the Solution Verifier so all three agree 100%.
  */
 export function stepKinematicBody(
@@ -92,54 +111,83 @@ export function stepKinematicBody(
   gravity: number,
   windAccel: number,
   ownerHitCenter: Vec2 | null,
-  tires: readonly BouncyTire[],
-): { bouncedTireId: number | null } {
+  mirrors: readonly MirrorPanel[],
+): { bouncedMirrorId: number | null } {
   body.elapsed += dt;
   body.x += (body.vx * dt + 0.5 * windAccel * dt * dt) * PIXELS_PER_METER;
   body.y -= (body.vy * dt - 0.5 * gravity * dt * dt) * PIXELS_PER_METER;
   body.vx += windAccel * dt;
   body.vy -= gravity * dt;
 
-  // Arm self-hit ONLY after banana cleanly exits the thrower's clearance radius
+  // Arm self-hit ONLY after banana cleanly exits thrower's clearance radius
   if (!body.hasClearedOwner && ownerHitCenter) {
     if (Math.hypot(body.x - ownerHitCenter.x, body.y - ownerHitCenter.y) >= OWNER_CLEARANCE_RADIUS) {
       body.hasClearedOwner = true;
     }
   }
 
-  // Elastic circle reflection against DK Bouncy Tires
-  let bouncedTireId: number | null = null;
-  if (body.bounces < MAX_TIRE_BOUNCES) {
-    for (const tire of tires) {
-      const dx = body.x - tire.x;
-      const dy = body.y - tire.y;
+  // Specular reflection against flat Mirror Panels (capsule segment collision)
+  let bouncedMirrorId: number | null = null;
+  if (body.bounces < MAX_MIRROR_BOUNCES) {
+    const hitDist = MIRROR_HALF_THICKNESS + BANANA_RADIUS;
+    for (const mirror of mirrors) {
+      const { a, b, tx, ty } = getMirrorEndpoints(mirror);
+      const abx = b.x - a.x;
+      const aby = b.y - a.y;
+      const abLenSq = abx * abx + aby * aby;
+      if (abLenSq < 1e-4) continue;
+
+      const tProj = clamp(((body.x - a.x) * abx + (body.y - a.y) * aby) / abLenSq, 0, 1);
+      const closestX = a.x + tProj * abx;
+      const closestY = a.y + tProj * aby;
+
+      const dx = body.x - closestX;
+      const dy = body.y - closestY;
       const dist = Math.hypot(dx, dy);
-      const minDist = tire.radius + BANANA_RADIUS;
-      if (dist > 0.001 && dist <= minDist) {
-        const nx = dx / dist;
-        const ny = dy / dist; // canvas y-down
+
+      if (dist <= hitDist) {
+        // Use clean flat plane normal along the mirror face (and radial normal only on rounded caps)
+        let nx: number;
+        let ny: number;
+        if (tProj > 0.02 && tProj < 0.98) {
+          // Perpendicular to mirror tangent (tx, ty)
+          const px = -ty;
+          const py = tx;
+          const side = dx * px + dy * py >= 0 ? 1 : -1;
+          nx = px * side;
+          ny = py * side;
+        } else if (dist > 0.001) {
+          nx = dx / dist;
+          ny = dy / dist;
+        } else {
+          nx = -ty;
+          ny = tx;
+        }
+
+        // Convert canvas normal (y-down) to physics normal (y-up)
         const pnx = nx;
-        const pny = -ny; // physics y-up
+        const pny = -ny;
         const dot = body.vx * pnx + body.vy * pny;
+
         if (dot < 0) {
-          body.vx = (body.vx - 2 * dot * pnx) * TIRE_RESTITUTION;
-          body.vy = (body.vy - 2 * dot * pny) * TIRE_RESTITUTION;
-          body.x = tire.x + nx * (minDist + 1.5);
-          body.y = tire.y + ny * (minDist + 1.5);
+          body.vx = (body.vx - 2 * dot * pnx) * MIRROR_RESTITUTION;
+          body.vy = (body.vy - 2 * dot * pny) * MIRROR_RESTITUTION;
+          body.x = closestX + nx * (hitDist + 1.5);
+          body.y = closestY + ny * (hitDist + 1.5);
           body.bounces++;
-          body.hasClearedOwner = true; // after bouncing off a tire, boomerang self-hits are fair game!
-          bouncedTireId = tire.id;
+          body.hasClearedOwner = true;
+          bouncedMirrorId = mirror.id;
           break;
         }
       }
     }
   }
 
-  return { bouncedTireId };
+  return { bouncedMirrorId };
 }
 
 /**
- * Samples a trajectory curve (including elastic DK tire bounces!) for Aim Hint previews.
+ * Samples a trajectory curve (including mirror bank-shot reflections!) for Aim Hint previews.
  */
 export function sampleTrajectory(
   origin: Vec2,
@@ -150,7 +198,7 @@ export function sampleTrajectory(
   windAccel: number,
   durationSec: number,
   stepSec = 0.04,
-  tires: readonly BouncyTire[] = [],
+  mirrors: readonly MirrorPanel[] = [],
   isSolidPixel?: (x: number, y: number) => boolean,
 ): Vec2[] {
   const { vx, vy } = computeVelocityComponents(angleDeg, speed, direction);
@@ -164,13 +212,18 @@ export function sampleTrajectory(
     bounces: 0,
   };
   const points: Vec2[] = [{ x: origin.x, y: origin.y }];
-  const subDt = 0.008;
+  const subDt = 0.006;
   let accum = 0;
 
   while (body.elapsed < durationSec) {
     const dt = Math.min(subDt, durationSec - body.elapsed);
-    stepKinematicBody(body, dt, gravity, windAccel, null, tires);
+    const { bouncedMirrorId } = stepKinematicBody(body, dt, gravity, windAccel, null, mirrors);
     accum += dt;
+
+    if (bouncedMirrorId !== null) {
+      points.push({ x: body.x, y: body.y });
+      accum = 0;
+    }
 
     if (isSolidPixel && body.y >= 0 && isSolidPixel(body.x, body.y)) {
       points.push({ x: body.x, y: body.y });
@@ -187,9 +240,6 @@ export function sampleTrajectory(
   return points;
 }
 
-/**
- * Computes theoretical flat-ground range (no wind) in meters for educational display.
- */
 export function theoreticalFlatRange(
   angleDeg: number,
   speed: number,
@@ -201,9 +251,9 @@ export function theoreticalFlatRange(
 }
 
 /**
- * Simulates an exact (angleDeg, speed, direction) launch using the EXACT same
- * kinematic stepper, self-hit clearance check, tire bounces, and building collision
- * rules as live gameplay.
+ * Simulates an exact (angleDeg, speed, direction) launch using the exact same
+ * kinematic stepper, self-hit clearance check, mirror bounces, and terrain checks
+ * as live gameplay.
  */
 export function simulateVerifiedShot(
   origin: Vec2,
@@ -214,8 +264,11 @@ export function simulateVerifiedShot(
   gravity: number,
   windAccel: number,
   isSolidPixel: (x: number, y: number) => boolean,
-  tires: readonly BouncyTire[] = [],
-  ownerHitCenter: Vec2 | null = { x: origin.x, y: origin.y + 16 },
+  mirrors: readonly MirrorPanel[] = [],
+  ownerHitCenter: Vec2 | null = {
+    x: origin.x,
+    y: origin.y + (GORILLA_HAND_OFFSET_Y - GORILLA_HIT_CENTER_Y),
+  },
   hitRadius = GORILLA_HIT_RADIUS + BANANA_RADIUS - 3,
 ): { hit: boolean; selfHit: boolean; flightTime: number; bounces: number; points: Vec2[] } {
   const { vx, vy } = computeVelocityComponents(angleDeg, speed, direction);
@@ -234,14 +287,23 @@ export function simulateVerifiedShot(
   let lastRecorded = points[0];
 
   while (body.elapsed < MAX_FLIGHT_SEC) {
-    stepKinematicBody(body, dt, gravity, windAccel, ownerHitCenter, tires);
+    const { bouncedMirrorId } = stepKinematicBody(
+      body,
+      dt,
+      gravity,
+      windAccel,
+      ownerHitCenter,
+      mirrors,
+    );
 
-    if (Math.hypot(body.x - lastRecorded.x, body.y - lastRecorded.y) >= 8) {
+    if (
+      bouncedMirrorId !== null ||
+      Math.hypot(body.x - lastRecorded.x, body.y - lastRecorded.y) >= 8
+    ) {
       points.push({ x: body.x, y: body.y });
       lastRecorded = points[points.length - 1];
     }
 
-    // Check self-hit (identical to live gameplay!)
     if (
       ownerHitCenter &&
       body.hasClearedOwner &&
@@ -252,18 +314,15 @@ export function simulateVerifiedShot(
       return { hit: false, selfHit: true, flightTime: body.elapsed, bounces: body.bounces, points };
     }
 
-    // Check target hit
     if (Math.hypot(body.x - target.x, body.y - target.y) <= hitRadius) {
       points.push({ x: body.x, y: body.y });
       return { hit: true, selfHit: false, flightTime: body.elapsed, bounces: body.bounces, points };
     }
 
-    // Check solid terrain collision (identical to live gameplay — no hidden grace mismatch!)
     if (body.y >= 0 && isSolidPixel(body.x, body.y)) {
       return { hit: false, selfHit: false, flightTime: body.elapsed, bounces: body.bounces, points };
     }
 
-    // Out of bounds
     if (body.x < -120 || body.x > WORLD_WIDTH + 120 || body.y > WORLD_HEIGHT + 20) {
       return { hit: false, selfHit: false, flightTime: body.elapsed, bounces: body.bounces, points };
     }
@@ -274,8 +333,7 @@ export function simulateVerifiedShot(
 
 /**
  * Searches for a verified unobstructed integer (angleDeg, speed, direction) launch
- * that hits `target` from `origin` under gravity, wind, terrain, and bouncy tires.
- * Supports negative downward angles and verifies zero self-blast!
+ * that hits `target` from `origin` under gravity, wind, terrain, and any placed mirrors.
  */
 export function findVerifiedSolution(
   origin: Vec2,
@@ -283,11 +341,14 @@ export function findVerifiedSolution(
   gravity: number,
   windAccel: number,
   isSolidPixel: (x: number, y: number) => boolean,
-  tires: readonly BouncyTire[] = [],
-  ownerHitCenter: Vec2 | null = { x: origin.x, y: origin.y + 16 },
+  mirrors: readonly MirrorPanel[] = [],
+  ownerHitCenter: Vec2 | null = {
+    x: origin.x,
+    y: origin.y + (GORILLA_HAND_OFFSET_Y - GORILLA_HIT_CENTER_Y),
+  },
 ): VerifiedSolution | null {
   const dxMeters = (target.x - origin.x) / PIXELS_PER_METER;
-  const dyMeters = (origin.y - target.y) / PIXELS_PER_METER; // upward positive
+  const dyMeters = (origin.y - target.y) / PIXELS_PER_METER;
 
   const maxT = gravity < 3 ? 14.5 : gravity < 6 ? 10.5 : 8.0;
   const tried = new Set<string>();
@@ -301,7 +362,6 @@ export function findVerifiedSolution(
 
   const candidates: ScoredCandidate[] = [];
 
-  // 1. Direct analytical sweep across flight times (covers downward, flat, and high arcs!)
   for (let i = 0; i <= 125; i++) {
     const T = 0.45 + (i / 125) * (maxT - 0.45);
     const vx = (dxMeters - 0.5 * windAccel * T * T) / T;
@@ -325,7 +385,6 @@ export function findVerifiedSolution(
         if (tried.has(key)) continue;
         tried.add(key);
 
-        // Prefer natural playable arcs (around 35-62 degrees, moderate speed)
         const prefScore =
           Math.abs(a - 46) * 0.4 + s * 0.12 + (Math.abs(da) + Math.abs(ds)) * 2;
         candidates.push({ angleDeg: a, speed: s, direction, prefScore });
@@ -345,7 +404,7 @@ export function findVerifiedSolution(
       gravity,
       windAccel,
       isSolidPixel,
-      tires,
+      mirrors,
       ownerHitCenter,
     );
     if (sim.hit && !sim.selfHit) {
@@ -360,14 +419,14 @@ export function findVerifiedSolution(
     }
   }
 
-  // 2. Fallback: try aiming at each bouncy tire to see if a bank shot unlocks a blocked spot
-  for (const tire of tires) {
-    const tdx = (tire.x - origin.x) / PIXELS_PER_METER;
-    const tdy = (origin.y - tire.y) / PIXELS_PER_METER;
-    for (let i = 0; i <= 24; i++) {
-      const T = 0.4 + (i / 24) * 3.5;
-      const vx = (tdx - 0.5 * windAccel * T * T) / T;
-      const vy = (tdy + 0.5 * gravity * T * T) / T;
+  // Fallback: check bank shots aimed at any player-placed Mirror Panels!
+  for (const mirror of mirrors) {
+    const mdx = (mirror.x - origin.x) / PIXELS_PER_METER;
+    const mdy = (origin.y - mirror.y) / PIXELS_PER_METER;
+    for (let i = 0; i <= 26; i++) {
+      const T = 0.35 + (i / 26) * 3.8;
+      const vx = (mdx - 0.5 * windAccel * T * T) / T;
+      const vy = (mdy + 0.5 * gravity * T * T) / T;
       const s = Math.round(Math.hypot(vx, vy));
       if (s < MIN_SPEED || s > MAX_SPEED) continue;
       const direction: ThrowDirection = vx >= 0 ? 1 : -1;
@@ -386,7 +445,7 @@ export function findVerifiedSolution(
         gravity,
         windAccel,
         isSolidPixel,
-        tires,
+        mirrors,
         ownerHitCenter,
       );
       if (sim.hit && !sim.selfHit) {
@@ -418,10 +477,10 @@ export function solveBotShot(
   windAccel: number,
   difficulty: BotDifficulty,
   isSolidPixel: (x: number, y: number) => boolean,
-  tires: readonly BouncyTire[] = [],
+  mirrors: readonly MirrorPanel[] = [],
   rng: () => number = Math.random,
 ): BotSolution {
-  const verified = findVerifiedSolution(origin, target, gravity, windAccel, isSolidPixel, tires);
+  const verified = findVerifiedSolution(origin, target, gravity, windAccel, isSolidPixel, mirrors);
 
   const dxMeters = (target.x - origin.x) / PIXELS_PER_METER;
   const defaultDir: ThrowDirection = dxMeters >= 0 ? 1 : -1;
@@ -467,7 +526,9 @@ export function generatePhysicsTip(
   const isHeadwind = windAccel * direction < -0.8;
 
   if (outcome === 'hit' && bounces > 0) {
-    return `Epic tire bank shot! Elastic collisions bounce at the same angle they arrive (angle of incidence = angle of reflection).`;
+    return bounces > 1
+      ? `Incredible ${bounces}-mirror chain reaction! Each flat mirror reflected the banana at θ_out = θ_in.`
+      : 'Awesome mirror bank shot! Flat mirrors reflect projectiles at the exact angle they arrive (θ_in = θ_out).';
   }
   if (outcome === 'self') {
     return 'Straight-up throws go up and come right back down onto your own head thanks to gravity!';
@@ -480,10 +541,10 @@ export function generatePhysicsTip(
   }
   if (outcome === 'hit') {
     if (angleDeg <= 0) {
-      return `Laser line drive (${angleDeg}°)! Throwing flat or downward from high ground uses gravity to drop straight onto lower targets.`;
+      return `Laser line drive (${angleDeg}°)! Throwing flat or downward from high ground uses gravity to drop onto lower targets.`;
     }
     if (angleDeg >= 65) {
-      return `Awesome high lob (${angleDeg}°)! Steep angles trade horizontal speed (Vx) for height (Vy) to clear tall landmarks.`;
+      return `Awesome high lob (${angleDeg}°)! Steep angles trade Vx for height (Vy) to clear tall landmarks.`;
     }
     if (angleDeg >= 40 && angleDeg <= 50) {
       return `Textbook ${angleDeg}° launch! Near 45° balances Vx and Vy for maximum distance in calm air.`;
@@ -500,10 +561,10 @@ export function generatePhysicsTip(
     return 'So close! Watch your dotted ghost trail and nudge angle or speed by just 2–3 units.';
   }
   if (bounces > 0) {
-    return 'Boing! You clipped a DK Bouncy Tire—try aiming slightly higher or lower on the tire to steer the bank angle!';
+    return 'Nice mirror deflection! Try tilting a placed mirror by ±5°–15° to steer the bank angle right onto your target.';
   }
   if (angleDeg < 15) {
-    return `Flat ${angleDeg}° shots have lots of Vx and little upward lift—try aiming higher or bouncing off a sky tire!`;
+    return `Flat ${angleDeg}° shots have lots of Vx and little upward lift—try aiming higher or placing an angled Mirror Panel!`;
   }
   if (isHeadwind) {
     return 'Watch that headwind! Wind pushes backward on Vx every second, so try a little more speed or a flatter arc.';
@@ -511,7 +572,7 @@ export function generatePhysicsTip(
   if (planet.id === 'jupiter') {
     return `Jupiter's gravity (${planet.gravity} m/s²) pulls bananas down 2.5× faster than Earth—crank up the speed!`;
   }
-  return 'Misses blast craters in terrain—adjust from your ghost trail, walk left/right, or try a bouncy tire bank shot!';
+  return 'Stuck behind a tall tower? Tap "+ Place Mirror" to angle a flat Physics Lab Mirror in the sky for a bank shot!';
 }
 
 export function computeAwards(players: Player[]): Award[] {
@@ -522,9 +583,9 @@ export function computeAwards(players: Player[]): Award[] {
   if (topBank && topBank.bankShotHits > 0) {
     awards.push({
       id: 'bank-shot',
-      title: 'Tire Trickshot',
-      subtitle: 'Bounced off a DK tire for a hit!',
-      badge: 'BOING',
+      title: 'Mirror Maestro',
+      subtitle: 'Landed a flat-mirror bank shot!',
+      badge: 'OPTICS',
       winnerName: topBank.name,
       winnerColor: topBank.color,
       valueLabel: `${topBank.bankShotHits} bank hit${topBank.bankShotHits > 1 ? 's' : ''}`,

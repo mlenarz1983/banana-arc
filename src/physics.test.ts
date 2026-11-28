@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   GORILLA_HAND_OFFSET_Y,
+  GORILLA_HIT_CENTER_Y,
+  MIRROR_HALF_LENGTH,
   PIXELS_PER_METER,
   PLANETS,
-  TIRE_RADIUS,
   WORLD_HEIGHT,
 } from './constants';
 import { ALL_LOCATIONS, buildLocation } from './locations';
@@ -17,7 +18,7 @@ import {
   theoreticalFlatRange,
 } from './physics';
 import { generateSolvableRound, SkylineTerrain, tryMoveGorilla } from './skyline';
-import type { BouncyTire, LocationSpec, Player } from './types';
+import type { LocationSpec, MirrorPanel, Player } from './types';
 
 describe('Projectile physics & self-blast prevention', () => {
   it('matches the analytical flat-ground range formula R = v^2 * sin(2θ) / g', () => {
@@ -37,13 +38,12 @@ describe('Projectile physics & self-blast prevention', () => {
     expect(simulatedRangeMeters).toBeCloseTo(expectedRangeMeters, 4);
   });
 
-  it('never self-blasts on slow Moon throws or steep shots while clearing the thrower', () => {
+  it('never self-blasts on slow Moon throws with larger TV-readable avatars', () => {
     const ownerFeet = { x: 120, y: 480 };
     const origin = { x: ownerFeet.x, y: ownerFeet.y - GORILLA_HAND_OFFSET_Y };
-    const ownerHit = { x: ownerFeet.x, y: ownerFeet.y - 22 };
+    const ownerHit = { x: ownerFeet.x, y: ownerFeet.y - GORILLA_HIT_CENTER_Y };
     const target = { x: 960, y: 460 };
 
-    // Slow Moon throw (12 m/s) that previously self-blasted at t=0.28s!
     const sim = simulateVerifiedShot(
       origin,
       target,
@@ -59,40 +59,61 @@ describe('Projectile physics & self-blast prevention', () => {
     expect(sim.selfHit).toBe(false);
   });
 
-  it('supports downward negative angles (-30° to 0°) from tall skyscrapers', () => {
-    const origin = { x: 200, y: 240 }; // high tower
-    const target = { x: 420, y: 420 }; // lower roof
-    const sol = findVerifiedSolution(
-      origin,
-      target,
-      PLANETS.earth.gravity,
-      0,
-      () => false,
-      [],
-      { x: 200, y: 256 },
-    );
-    expect(sol).not.toBeNull();
-
-    // Explicitly verify a negative downward angle (-15°) hits a lower target cleanly
-    const { vx, vy } = computeVelocityComponents(-15, 30, 1);
-    expect(vy).toBeLessThan(0);
-    expect(vx).toBeGreaterThan(0);
-  });
-
-  it('reflects bananas elastically off floating DK Bouncy Tires', () => {
-    const tire: BouncyTire = {
+  it('reflects projectiles specularly (θ_in = θ_out) off a flat horizontal Mirror Panel', () => {
+    const mirror: MirrorPanel = {
       id: 1,
       x: 400,
-      y: 300,
-      radius: TIRE_RADIUS,
-      balloonColor: '#ef4444',
-      phaseOffset: 0,
+      y: 250,
+      halfLength: MIRROR_HALF_LENGTH,
+      angleDeg: 0, // horizontal ceiling mirror
+      ownerId: 0,
+      ownerColor: '#38bdf8',
+      locked: true,
       bounceAnim: 0,
     };
 
-    // Shoot straight right into the left side of the tire
+    // Banana flying up-right into underside of horizontal mirror
     const body = {
-      x: 340,
+      x: 380,
+      y: 290,
+      vx: 20,
+      vy: 30, // upward
+      elapsed: 0,
+      hasClearedOwner: true,
+      bounces: 0,
+    };
+
+    let bouncedId: number | null = null;
+    for (let i = 0; i < 80; i++) {
+      const res = stepKinematicBody(body, 0.005, 0, 0, null, [mirror]);
+      if (res.bouncedMirrorId !== null) {
+        bouncedId = res.bouncedMirrorId;
+        break;
+      }
+    }
+
+    expect(bouncedId).toBe(1);
+    expect(body.bounces).toBe(1);
+    expect(body.vx).toBeGreaterThan(18); // horizontal component preserved!
+    expect(body.vy).toBeLessThan(-25); // vertical component cleanly inverted downward!
+  });
+
+  it('reflects projectiles 90 degrees off a 45°-tilted Mirror Panel', () => {
+    const mirror: MirrorPanel = {
+      id: 2,
+      x: 400,
+      y: 300,
+      halfLength: MIRROR_HALF_LENGTH,
+      angleDeg: 45, // tilted up-right at 45°
+      ownerId: 0,
+      ownerColor: '#38bdf8',
+      locked: true,
+      bounceAnim: 0,
+    };
+
+    // Flying straight right (+vx, vy=0) into a +45° (/) mirror -> bounces straight UP (vx≈0, vy=+29.4)!
+    const body = {
+      x: 350,
       y: 300,
       vx: 30,
       vy: 0,
@@ -101,24 +122,35 @@ describe('Projectile physics & self-blast prevention', () => {
       bounces: 0,
     };
 
-    let bouncedId: number | null = null;
-    for (let i = 0; i < 80; i++) {
-      const res = stepKinematicBody(body, 0.005, 0, 0, null, [tire]);
-      if (res.bouncedTireId !== null) {
-        bouncedId = res.bouncedTireId;
+    let bounced = false;
+    for (let i = 0; i < 100; i++) {
+      const res = stepKinematicBody(body, 0.005, 0, 0, null, [mirror]);
+      if (res.bouncedMirrorId === 2) {
+        bounced = true;
         break;
       }
     }
 
-    expect(bouncedId).toBe(1);
-    expect(body.bounces).toBe(1);
-    expect(body.vx).toBeLessThan(0); // bounced cleanly backward!
+    expect(bounced).toBe(true);
+    expect(Math.abs(body.vx)).toBeLessThan(1.5);
+    expect(body.vy).toBeGreaterThan(25);
+
+    // And a -45° (\) mirror bounces right-moving projectile straight DOWN (vy < -25)!
+    const downMirror: MirrorPanel = { ...mirror, id: 3, angleDeg: -45 };
+    const body2 = { x: 350, y: 300, vx: 30, vy: 0, elapsed: 0, hasClearedOwner: true, bounces: 0 };
+    for (let i = 0; i < 100; i++) {
+      if (stepKinematicBody(body2, 0.005, 0, 0, null, [downMirror]).bouncedMirrorId === 3) break;
+    }
+    expect(Math.abs(body2.vx)).toBeLessThan(1.5);
+    expect(body2.vy).toBeLessThan(-25);
   });
 });
 
-describe('15 Iconic locations & verified solvability', () => {
-  it('generates a verified solvable round for ALL 15 iconic cities and wild terrains', () => {
+describe('15 Overhauled Iconic Locations & Clean-Sky Solvability', () => {
+  it('includes Chicago and Atlanta and guarantees ALL 15 locations are solvable', () => {
     expect(ALL_LOCATIONS).toHaveLength(15);
+    expect(ALL_LOCATIONS).toContain('chicago');
+    expect(ALL_LOCATIONS).toContain('atlanta');
 
     for (const locId of ALL_LOCATIONS) {
       const round = generateSolvableRound(
@@ -126,13 +158,11 @@ describe('15 Iconic locations & verified solvability', () => {
         PLANETS.earth.gravity,
         true,
         locId,
-        true,
         4200 + locId.length * 97,
       );
       expect(round.locationId).toBe(locId);
       expect(round.spawnPositions).toHaveLength(2);
 
-      // Verify both players have a clean, zero-self-blast integer solution!
       for (let i = 0; i < 2; i++) {
         const opp = 1 - i;
         const origin = {
@@ -141,11 +171,11 @@ describe('15 Iconic locations & verified solvability', () => {
         };
         const ownerHit = {
           x: round.spawnPositions[i].x,
-          y: round.spawnPositions[i].y - 22,
+          y: round.spawnPositions[i].y - GORILLA_HIT_CENTER_Y,
         };
         const target = {
           x: round.spawnPositions[opp].x,
-          y: round.spawnPositions[opp].y - 22,
+          y: round.spawnPositions[opp].y - GORILLA_HIT_CENTER_Y,
         };
 
         const sol = findVerifiedSolution(
@@ -154,7 +184,7 @@ describe('15 Iconic locations & verified solvability', () => {
           PLANETS.earth.gravity,
           round.windAccel,
           (x, y) => round.terrain.isSolid(x, y),
-          round.tires,
+          [],
           ownerHit,
         );
         expect(sol, `Location ${locId} player ${i} must be solvable`).not.toBeNull();
@@ -165,20 +195,19 @@ describe('15 Iconic locations & verified solvability', () => {
   it('keeps the St. Louis Gateway Arch hollow underneath for threading shots', () => {
     const stLouis = buildLocation('st-louis');
     const terrain = new SkylineTerrain(stLouis);
-    // Center air gap beneath the arch (x=600, y=H-220) should be open air, while apex ring is solid
     expect(terrain.isSolid(600, WORLD_HEIGHT - 220)).toBe(false);
-    expect(terrain.isSolid(600, WORLD_HEIGHT - 120 - 255)).toBe(true);
+    expect(terrain.isSolid(600, WORLD_HEIGHT - 120 - 260)).toBe(true);
   });
 });
 
 describe('Gorilla rooftop movement (downhill only)', () => {
   it('allows walking and dropping down onto lower roofs, but blocks climbing taller walls', () => {
     const testLoc: LocationSpec = {
-      id: 'nyc',
+      id: 'chicago',
       name: 'Test',
       region: 'Test',
       category: 'city',
-      skyMood: 'sunset',
+      skyMood: 'twilight',
       shapes: [
         { kind: 'rect', x: 0, y: WORLD_HEIGHT - 300, width: 100, height: 300, colorIndex: 0 },
         { kind: 'rect', x: 100, y: WORLD_HEIGHT - 200, width: 100, height: 200, colorIndex: 1 },
@@ -201,7 +230,7 @@ describe('Gorilla rooftop movement (downhill only)', () => {
 });
 
 describe('Awards', () => {
-  it('awards Tire Trickshot for bank shot hits', () => {
+  it('awards Mirror Maestro for bank shot hits', () => {
     const makePlayer = (id: number, name: string, overrides: Partial<Player>): Player => ({
       id,
       name,
@@ -234,6 +263,7 @@ describe('Awards', () => {
       makePlayer(0, 'Maya', { bankShotHits: 2, hits: 2 }),
       makePlayer(1, 'Leo', { bankShotHits: 0, hits: 1 }),
     ]);
+    expect(awards.find((a) => a.id === 'bank-shot')?.title).toBe('Mirror Maestro');
     expect(awards.find((a) => a.id === 'bank-shot')?.winnerName).toBe('Maya');
   });
 });

@@ -1,5 +1,5 @@
 import { WORLD_HEIGHT, WORLD_WIDTH } from './constants';
-import type { ConcreteLocationId, LocationSpec, TerrainShape, Vec2 } from './types';
+import type { ConcreteLocationId, LocationSpec, PolyStyle, RectStyle, TerrainShape, Vec2 } from './types';
 
 const H = WORLD_HEIGHT;
 
@@ -8,7 +8,7 @@ function bld(
   w: number,
   h: number,
   colorIndex: number,
-  style: Extract<TerrainShape, { kind: 'rect' }>['style'] = 'building',
+  style: RectStyle = 'building',
   seed = x * 13 + h,
   accent?: string,
 ): TerrainShape {
@@ -28,102 +28,66 @@ function bld(
 function poly(
   points: Vec2[],
   colorIndex: number,
-  style: Extract<TerrainShape, { kind: 'poly' }>['style'] = 'landmark',
+  style: PolyStyle = 'landmark',
   accent?: string,
 ): TerrainShape {
   return { kind: 'poly', points, colorIndex, style, accent };
 }
 
-function makeNYC(): LocationSpec {
-  const shapes: TerrainShape[] = [
-    // Left waterfront + Brooklyn Bridge towers
-    bld(0, 88, 170, 0),
-    bld(88, 34, 245, 3, 'bridge-tower'),
-    bld(122, 110, 155, 3, 'bridge-deck'),
-    bld(232, 34, 245, 3, 'bridge-tower'),
-    // Midtown
-    bld(266, 98, 225, 1),
-    bld(364, 96, 280, 2),
-    // Empire State Building (stepped + spire)
-    bld(460, 110, 275, 0),
-    bld(478, 74, 345, 0),
-    bld(496, 38, 385, 0),
-    bld(511, 8, 435, 0, 'spire'),
-    // Midtown filler
-    bld(570, 96, 210, 1),
-    // Chrysler Building (stepped Art Deco crown)
-    bld(666, 92, 270, 2),
-    poly(
-      [
-        { x: 676, y: H - 270 },
-        { x: 712, y: H - 365 },
-        { x: 748, y: H - 270 },
-      ],
-      2,
-      'spire',
-      '#e2e8f0',
-    ),
-    bld(758, 102, 230, 3),
-    // One World Trade Center (tapered + needle)
-    poly(
-      [
-        { x: 860, y: H },
-        { x: 874, y: H - 355 },
-        { x: 946, y: H - 355 },
-        { x: 960, y: H },
-      ],
-      1,
-      'landmark',
-    ),
-    bld(906, 8, 415, 1, 'spire'),
-    // Lower Manhattan right
-    bld(960, 115, 215, 0),
-    bld(1075, 125, 175, 2),
-  ];
-  return {
-    id: 'nyc',
-    name: 'New York City',
-    region: 'USA',
-    category: 'city',
-    skyMood: 'sunset',
-    shapes,
-    spawnSpots: [
-      { x: 50, y: H - 170 },
-      { x: 175, y: H - 155 },
-      { x: 315, y: H - 225 },
-      { x: 618, y: H - 210 },
-      { x: 808, y: H - 230 },
-      { x: 1020, y: H - 215 },
-      { x: 1135, y: H - 175 },
-    ],
-  };
-}
-
 function makeChicago(): LocationSpec {
   const shapes: TerrainShape[] = [
-    bld(0, 110, 175, 1),
-    // John Hancock Center (X-braced)
-    bld(110, 102, 305, 0, 'xbrace'),
-    bld(136, 6, 365, 0, 'spire'),
-    bld(182, 6, 365, 0, 'spire'),
-    // Riverfront
-    bld(212, 106, 200, 2),
-    // Marina City twin corncob cylinders
-    bld(318, 60, 245, 3, 'cylinder'),
-    bld(382, 60, 245, 3, 'cylinder'),
-    bld(442, 92, 185, 1),
-    // Willis (Sears) Tower stepped bundle + twin antennas
-    bld(534, 128, 250, 0),
-    bld(552, 96, 320, 0),
-    bld(570, 62, 375, 0),
-    bld(582, 6, 430, 0, 'spire'),
-    bld(614, 6, 430, 0, 'spire'),
-    // Loop & Lakefront
-    bld(662, 108, 235, 2),
-    bld(770, 102, 275, 1),
-    bld(872, 112, 210, 3),
-    bld(984, 106, 240, 0),
-    bld(1090, 110, 165, 2),
+    // Millennium Park plaza & The Bean (Cloud Gate)
+    bld(0, 122, 148, 2, 'deck', 10),
+    { kind: 'rect', x: 34, y: H - 174, width: 58, height: 26, colorIndex: 2, style: 'bean' },
+    // John Hancock Center (875 N Michigan) — true tapered trapezoid with 5-tier X-bracing + twin white masts!
+    poly(
+      [
+        { x: 122, y: H },
+        { x: 140, y: H - 325 },
+        { x: 214, y: H - 325 },
+        { x: 232, y: H },
+      ],
+      0,
+      'xbrace-taper',
+      '#1e242b',
+    ),
+    bld(156, 6, 385, 0, 'beacon-spire', 11, '#f8fafc'),
+    bld(192, 6, 385, 0, 'beacon-spire', 12, '#f8fafc'),
+    // Riverfront mid-rise
+    bld(232, 90, 188, 1),
+    // Marina City — iconic twin scalloped "corncob" cylinders!
+    bld(326, 56, 250, 2, 'corncob', 31, '#cbd5e1'),
+    bld(388, 56, 250, 2, 'corncob', 32, '#cbd5e1'),
+    // Lower Loop block
+    bld(448, 86, 172, 3),
+    // Willis (Sears) Tower — unmistakable asymmetric 9-7-5-2 bundled-tube setbacks + twin white broadcast masts!
+    bld(534, 134, 240, 0, 'building', 50, '#181c22'),
+    bld(534, 102, 305, 0, 'building', 51, '#181c22'),
+    bld(558, 78, 355, 0, 'building', 52, '#181c22'),
+    bld(572, 50, 392, 0, 'building', 53, '#181c22'),
+    bld(582, 6, 448, 0, 'beacon-spire', 54, '#f8fafc'),
+    bld(606, 6, 448, 0, 'beacon-spire', 55, '#f8fafc'),
+    // Aon Center (tall clean pale vertical monolith)
+    bld(674, 88, 295, 2, 'glass-cylinder', 60, '#cbd5e1'),
+    // Crain Communications ("Diamond Building") — iconic slanted diagonal diamond roof!
+    bld(768, 92, 235, 1),
+    poly(
+      [
+        { x: 768, y: H - 235 },
+        { x: 814, y: H - 305 },
+        { x: 860, y: H - 235 },
+      ],
+      1,
+      'diamond-roof',
+      '#e2e8f0',
+    ),
+    // Trump Tower stepped riverfront setback
+    bld(866, 94, 215, 2),
+    bld(886, 54, 265, 2),
+    bld(910, 6, 305, 2, 'beacon-spire', 70, '#e2e8f0'),
+    // Grant Park / Lakefront right
+    bld(960, 118, 195, 3),
+    bld(1078, 122, 155, 0),
   ];
   return {
     id: 'chicago',
@@ -131,44 +95,182 @@ function makeChicago(): LocationSpec {
     region: 'USA',
     category: 'city',
     skyMood: 'twilight',
+    backdrop: 'lake-michigan',
     shapes,
     spawnSpots: [
-      { x: 55, y: H - 175 },
-      { x: 265, y: H - 200 },
-      { x: 488, y: H - 185 },
-      { x: 716, y: H - 235 },
-      { x: 928, y: H - 210 },
-      { x: 1140, y: H - 165 },
+      { x: 64, y: H - 174 },
+      { x: 277, y: H - 188 },
+      { x: 490, y: H - 172 },
+      { x: 718, y: H - 295 },
+      { x: 1018, y: H - 195 },
+      { x: 1138, y: H - 155 },
+    ],
+  };
+}
+
+function makeAtlanta(): LocationSpec {
+  const shapes: TerrainShape[] = [
+    // Downtown Midtown left
+    bld(0, 116, 165, 3),
+    // 191 Peachtree Tower — twin illuminated Gothic crowns!
+    bld(116, 102, 265, 1, 'twin-crown', 21, '#d6cfc2'),
+    // Low Peachtree plaza
+    bld(218, 96, 185, 0),
+    // Westin Peachtree Plaza — iconic tall reflective glass cylinder!
+    bld(314, 92, 325, 2, 'glass-cylinder', 35, '#3b6e8c'),
+    bld(340, 40, 342, 2, 'dome', 36, '#93c5fd'),
+    // Midtown filler
+    bld(406, 90, 198, 1),
+    // Bank of America Plaza — rose-terracotta stepped tower + iconic glowing gilded gold open-lattice spire!
+    bld(496, 116, 255, 3, 'building', 41, '#7c4a3e'),
+    bld(512, 84, 305, 3, 'building', 42, '#8b5548'),
+    poly(
+      [
+        { x: 522, y: H - 305 },
+        { x: 554, y: H - 418 },
+        { x: 586, y: H - 305 },
+      ],
+      3,
+      'gold-lattice',
+      '#fbbf24',
+    ),
+    bld(551, 6, 434, 3, 'beacon-spire', 43, '#fde047'),
+    // Centennial Park mid-rise
+    bld(612, 106, 190, 0),
+    // One Atlantic Center — stately granite tower with glowing copper-gold pyramid peak!
+    bld(718, 102, 290, 3, 'building', 55, '#6b5b52'),
+    poly(
+      [
+        { x: 722, y: H - 290 },
+        { x: 769, y: H - 365 },
+        { x: 816, y: H - 290 },
+      ],
+      3,
+      'gold-lattice',
+      '#f59e0b',
+    ),
+    // Truist (SunTrust) Plaza — stepped golden crown!
+    bld(820, 102, 260, 1, 'gold-crown', 62),
+    bld(922, 134, 195, 2),
+    bld(1056, 144, 160, 0),
+  ];
+  return {
+    id: 'atlanta',
+    name: 'Atlanta',
+    region: 'USA',
+    category: 'city',
+    skyMood: 'sunset',
+    backdrop: 'city-depth',
+    shapes,
+    spawnSpots: [
+      { x: 58, y: H - 165 },
+      { x: 266, y: H - 185 },
+      { x: 451, y: H - 198 },
+      { x: 665, y: H - 190 },
+      { x: 988, y: H - 195 },
+      { x: 1126, y: H - 160 },
+    ],
+  };
+}
+
+function makeNYC(): LocationSpec {
+  const shapes: TerrainShape[] = [
+    // Brooklyn Bridge stone Gothic towers + roadway
+    bld(0, 80, 165, 0),
+    bld(80, 36, 255, 3, 'bridge-tower', 11, '#8c7a6b'),
+    bld(116, 118, 152, 3, 'bridge-deck', 12, '#64748b'),
+    bld(234, 36, 255, 3, 'bridge-tower', 13, '#8c7a6b'),
+    // Midtown
+    bld(270, 96, 215, 1),
+    bld(366, 94, 265, 2),
+    // Empire State Building (stepped setbacks + silver mast + blinking beacon)
+    bld(460, 114, 265, 0),
+    bld(476, 82, 332, 0),
+    bld(494, 46, 378, 0),
+    bld(513, 8, 440, 0, 'beacon-spire', 20, '#e2e8f0'),
+    bld(574, 90, 200, 1),
+    // Chrysler Building (Art Deco gleaming sunburst spire)
+    bld(664, 92, 265, 2),
+    poly(
+      [
+        { x: 672, y: H - 265 },
+        { x: 710, y: H - 375 },
+        { x: 748, y: H - 265 },
+      ],
+      2,
+      'diamond-roof',
+      '#f1f5f9',
+    ),
+    bld(756, 102, 220, 3),
+    // One World Trade Center (sleek tapered glass tower + spire)
+    poly(
+      [
+        { x: 858, y: H },
+        { x: 874, y: H - 355 },
+        { x: 946, y: H - 355 },
+        { x: 962, y: H },
+      ],
+      2,
+      'shard',
+      '#60a5fa',
+    ),
+    bld(907, 6, 425, 2, 'beacon-spire', 44, '#f8fafc'),
+    bld(962, 118, 205, 0),
+    bld(1080, 120, 168, 1),
+  ];
+  return {
+    id: 'nyc',
+    name: 'New York City',
+    region: 'USA',
+    category: 'city',
+    skyMood: 'sunset',
+    backdrop: 'city-depth',
+    cables: [
+      { x1: 18, y1: H - 152, x2: 98, y2: H - 250, sag: 28, color: '#cbd5e1', suspenderCount: 5, deckY: H - 152 },
+      { x1: 98, y1: H - 250, x2: 252, y2: H - 250, sag: 66, color: '#cbd5e1', suspenderCount: 9, deckY: H - 152 },
+      { x1: 252, y1: H - 250, x2: 310, y2: H - 152, sag: 22, color: '#cbd5e1', suspenderCount: 4, deckY: H - 152 },
+    ],
+    shapes,
+    spawnSpots: [
+      { x: 42, y: H - 165 },
+      { x: 175, y: H - 152 },
+      { x: 318, y: H - 215 },
+      { x: 619, y: H - 200 },
+      { x: 808, y: H - 220 },
+      { x: 1020, y: H - 205 },
+      { x: 1140, y: H - 168 },
     ],
   };
 }
 
 function makeSanFrancisco(): LocationSpec {
   const shapes: TerrainShape[] = [
-    // Golden Gate Bridge (left side over bay)
-    bld(0, 360, 130, 3, 'bridge-deck', 10, '#c0392b'),
-    bld(82, 30, 275, 3, 'bridge-tower', 11, '#c0392b'),
-    bld(268, 30, 275, 3, 'bridge-tower', 12, '#c0392b'),
-    // Downtown slopes
-    bld(360, 105, 195, 1),
-    bld(465, 100, 240, 2),
-    // Transamerica Pyramid
+    // Golden Gate Bridge (International Orange Art Deco towers + road deck)
+    bld(0, 365, 132, 3, 'bridge-deck', 10, '#c0392b'),
+    bld(78, 30, 285, 3, 'bridge-tower', 11, '#c0392b'),
+    bld(266, 30, 285, 3, 'bridge-tower', 12, '#c0392b'),
+    // Financial District
+    bld(365, 102, 195, 1),
+    bld(467, 94, 240, 0),
+    // Transamerica Pyramid (bright white spire with iconic side elevator wings!)
+    bld(572, 92, 200, 2, 'building', 30, '#cbd5e1'),
     poly(
       [
-        { x: 565, y: H },
-        { x: 618, y: H - 380 },
-        { x: 671, y: H },
+        { x: 562, y: H },
+        { x: 618, y: H - 392 },
+        { x: 674, y: H },
       ],
       2,
-      'spire',
+      'transamerica',
       '#f1f5f9',
     ),
-    bld(671, 95, 215, 0),
-    // Salesforce Tower (rounded top cylinder)
-    bld(766, 98, 330, 1, 'dome'),
-    bld(864, 112, 245, 3),
-    bld(976, 110, 200, 0),
-    bld(1086, 114, 165, 2),
+    bld(674, 92, 210, 0),
+    // Salesforce Tower (tall tapering glass obelisk dome)
+    bld(766, 98, 330, 2, 'glass-cylinder', 45, '#64748b'),
+    bld(776, 78, 355, 2, 'dome', 46, '#bae6fd'),
+    bld(864, 114, 240, 3),
+    bld(978, 110, 198, 1),
+    bld(1088, 112, 165, 0),
   ];
   return {
     id: 'san-francisco',
@@ -177,39 +279,52 @@ function makeSanFrancisco(): LocationSpec {
     category: 'city',
     skyMood: 'sunset',
     backdrop: 'bay-water',
+    cables: [
+      { x1: 4, y1: H - 132, x2: 93, y2: H - 280, sag: 42, color: '#e74c3c', suspenderCount: 6, deckY: H - 132 },
+      { x1: 93, y1: H - 280, x2: 281, y2: H - 280, sag: 105, color: '#e74c3c', suspenderCount: 12, deckY: H - 132 },
+      { x1: 281, y1: H - 280, x2: 360, y2: H - 132, sag: 40, color: '#e74c3c', suspenderCount: 5, deckY: H - 132 },
+    ],
     shapes,
     spawnSpots: [
-      { x: 42, y: H - 130 },
-      { x: 190, y: H - 130 },
-      { x: 412, y: H - 195 },
-      { x: 718, y: H - 215 },
-      { x: 920, y: H - 245 },
-      { x: 1140, y: H - 165 },
+      { x: 42, y: H - 132 },
+      { x: 186, y: H - 132 },
+      { x: 415, y: H - 195 },
+      { x: 720, y: H - 210 },
+      { x: 920, y: H - 240 },
+      { x: 1142, y: H - 165 },
     ],
   };
 }
 
 function makeSeattle(): LocationSpec {
   const shapes: TerrainShape[] = [
-    bld(0, 120, 170, 2),
-    bld(120, 110, 215, 0),
-    // Space Needle!
-    bld(275, 34, 285, 2, 'cylinder'),
-    bld(240, 104, 298, 2, 'deck'),
-    { kind: 'rect', x: 240, y: H - 314, width: 104, height: 18, colorIndex: 2, style: 'deck', accent: '#f8fafc' },
-    bld(289, 6, 370, 2, 'spire'),
-    // Fill base under Space Needle so gorillas can stand around it
-    bld(230, 124, 145, 1),
-    // Downtown Seattle
-    bld(354, 116, 210, 3),
-    bld(470, 110, 265, 0),
-    // Columbia Center (tall dark stepped tower)
-    bld(580, 114, 345, 0),
-    bld(602, 70, 372, 0),
-    bld(694, 108, 250, 1),
-    bld(802, 112, 215, 2),
-    bld(914, 134, 185, 3),
-    bld(1048, 152, 155, 1),
+    bld(0, 118, 168, 2),
+    bld(118, 108, 212, 0),
+    // Space Needle (flared base + slim waist + glowing observation saucer + beacon needle!)
+    bld(226, 132, 145, 1),
+    poly(
+      [
+        { x: 258, y: H - 145 },
+        { x: 280, y: H - 295 },
+        { x: 304, y: H - 295 },
+        { x: 326, y: H - 145 },
+      ],
+      2,
+      'landmark',
+      '#e2e8f0',
+    ),
+    { kind: 'rect', x: 238, y: H - 314, width: 108, height: 19, colorIndex: 2, style: 'deck', accent: '#f8fafc' },
+    { kind: 'rect', x: 256, y: H - 324, width: 72, height: 10, colorIndex: 2, style: 'deck', accent: '#38bdf8' },
+    bld(289, 6, 385, 2, 'beacon-spire', 20, '#f8fafc'),
+    // Downtown Seattle + Columbia Center
+    bld(358, 112, 208, 3),
+    bld(470, 108, 260, 0),
+    bld(578, 118, 340, 0, 'building', 35, '#1e293b'),
+    bld(600, 74, 376, 0, 'building', 36, '#1e293b'),
+    bld(696, 108, 245, 1),
+    bld(804, 112, 210, 2),
+    bld(916, 136, 185, 3),
+    bld(1052, 148, 155, 1),
   ];
   return {
     id: 'seattle',
@@ -220,91 +335,34 @@ function makeSeattle(): LocationSpec {
     backdrop: 'mt-rainier',
     shapes,
     spawnSpots: [
-      { x: 60, y: H - 170 },
-      { x: 175, y: H - 215 },
-      { x: 412, y: H - 210 },
-      { x: 748, y: H - 250 },
-      { x: 980, y: H - 185 },
-      { x: 1125, y: H - 155 },
-    ],
-  };
-}
-
-function makeAtlanta(): LocationSpec {
-  const shapes: TerrainShape[] = [
-    bld(0, 125, 165, 3),
-    bld(125, 115, 215, 1),
-    // Westin Peachtree Plaza (tall cylinder)
-    bld(240, 96, 315, 2, 'cylinder'),
-    bld(336, 114, 200, 0),
-    // Bank of America Plaza (gilded pencil spire)
-    bld(450, 106, 290, 3),
-    poly(
-      [
-        { x: 462, y: H - 290 },
-        { x: 503, y: H - 395 },
-        { x: 544, y: H - 290 },
-      ],
-      3,
-      'spire',
-      '#fbbf24',
-    ),
-    bld(556, 116, 220, 1),
-    // One Atlantic Center / SunTrust pyramid top
-    bld(672, 104, 280, 0),
-    poly(
-      [
-        { x: 676, y: H - 280 },
-        { x: 724, y: H - 340 },
-        { x: 772, y: H - 280 },
-      ],
-      0,
-      'spire',
-      '#f59e0b',
-    ),
-    bld(776, 120, 235, 2),
-    bld(896, 144, 195, 1),
-    bld(1040, 160, 165, 0),
-  ];
-  return {
-    id: 'atlanta',
-    name: 'Atlanta',
-    region: 'USA',
-    category: 'city',
-    skyMood: 'sunset',
-    shapes,
-    spawnSpots: [
-      { x: 64, y: H - 165 },
-      { x: 182, y: H - 215 },
-      { x: 392, y: H - 200 },
-      { x: 614, y: H - 220 },
-      { x: 836, y: H - 235 },
-      { x: 968, y: H - 195 },
-      { x: 1120, y: H - 165 },
+      { x: 60, y: H - 168 },
+      { x: 172, y: H - 212 },
+      { x: 414, y: H - 208 },
+      { x: 750, y: H - 245 },
+      { x: 984, y: H - 185 },
+      { x: 1126, y: H - 155 },
     ],
   };
 }
 
 function makeStLouis(): LocationSpec {
   const shapes: TerrainShape[] = [
-    // Left riverfront + Old Courthouse dome
     bld(0, 125, 175, 3),
-    bld(125, 110, 235, 0),
+    bld(125, 110, 238, 0),
     bld(235, 115, 185, 1),
-    // Riverfront base ground under the Gateway Arch
-    bld(350, 500, 120, 2),
-    // Iconic hollow Gateway Arch! Players can lob over OR thread right through!
+    // Mississippi riverfront plaza under the Gateway Arch
+    bld(350, 500, 120, 2, 'deck'),
+    // Iconic hollow stainless-steel Gateway Arch!
     {
       kind: 'arch',
       cx: 600,
       baseY: H - 120,
-      outerRx: 175,
-      outerRy: 265,
+      outerRx: 178,
+      outerRy: 272,
       thickness: 24,
       colorIndex: 2,
       style: 'gateway-arch',
     },
-    // Right downtown skyline
     bld(850, 115, 210, 0),
     bld(965, 115, 250, 1),
     bld(1080, 120, 180, 3),
@@ -315,10 +373,11 @@ function makeStLouis(): LocationSpec {
     region: 'USA',
     category: 'city',
     skyMood: 'sunset',
+    backdrop: 'city-depth',
     shapes,
     spawnSpots: [
       { x: 64, y: H - 175 },
-      { x: 180, y: H - 235 },
+      { x: 180, y: H - 238 },
       { x: 292, y: H - 185 },
       { x: 600, y: H - 120 },
       { x: 908, y: H - 210 },
@@ -330,26 +389,35 @@ function makeStLouis(): LocationSpec {
 
 function makeParis(): LocationSpec {
   const shapes: TerrainShape[] = [
-    // Haussmann blocks + Arc de Triomphe
     bld(0, 115, 165, 3),
-    bld(115, 108, 210, 3),
-    bld(223, 125, 175, 1),
-    bld(348, 132, 160, 2),
-    // Eiffel Tower (stepped graceful A-frame)
-    bld(480, 240, 125, 3),
+    // Arc de Triomphe silhouette
+    bld(115, 110, 212, 3, 'gold-crown'),
+    bld(225, 125, 175, 1),
+    bld(350, 130, 160, 2),
+    // Eiffel Tower — arched open base + crisp iron lattice pyramid + beacon!
+    bld(480, 240, 120, 3, 'deck'),
+    {
+      kind: 'arch',
+      cx: 600,
+      baseY: H - 120,
+      outerRx: 74,
+      outerRy: 62,
+      thickness: 24,
+      colorIndex: 3,
+      style: 'eiffel-base',
+    },
     poly(
       [
-        { x: 522, y: H - 125 },
-        { x: 586, y: H - 395 },
-        { x: 614, y: H - 395 },
-        { x: 678, y: H - 125 },
+        { x: 536, y: H - 172 },
+        { x: 588, y: H - 405 },
+        { x: 612, y: H - 405 },
+        { x: 664, y: H - 172 },
       ],
       3,
-      'landmark',
-      '#b07d62',
+      'eiffel-lattice',
+      '#8c6248',
     ),
-    bld(596, 8, 425, 3, 'spire'),
-    // Right bank + Tour Montparnasse
+    bld(597, 6, 434, 3, 'beacon-spire', 80, '#fde047'),
     bld(720, 125, 170, 1),
     bld(845, 115, 200, 2),
     bld(960, 108, 285, 0),
@@ -361,12 +429,13 @@ function makeParis(): LocationSpec {
     region: 'France',
     category: 'city',
     skyMood: 'sunset',
+    backdrop: 'city-depth',
     shapes,
     spawnSpots: [
       { x: 58, y: H - 165 },
-      { x: 170, y: H - 210 },
-      { x: 286, y: H - 175 },
-      { x: 414, y: H - 160 },
+      { x: 170, y: H - 212 },
+      { x: 288, y: H - 175 },
+      { x: 415, y: H - 160 },
       { x: 782, y: H - 170 },
       { x: 902, y: H - 200 },
       { x: 1134, y: H - 175 },
@@ -376,39 +445,54 @@ function makeParis(): LocationSpec {
 
 function makeLondon(): LocationSpec {
   const shapes: TerrainShape[] = [
-    bld(0, 115, 170, 3),
-    // Big Ben (Elizabeth Tower)
-    bld(115, 68, 305, 3, 'clock'),
+    bld(0, 112, 170, 3),
+    // Big Ben (Elizabeth Tower) with glowing clock dial + Gothic spire
+    bld(112, 70, 305, 3, 'clock'),
     poly(
       [
-        { x: 115, y: H - 305 },
-        { x: 149, y: H - 365 },
-        { x: 183, y: H - 305 },
+        { x: 112, y: H - 305 },
+        { x: 147, y: H - 372 },
+        { x: 182, y: H - 305 },
       ],
       3,
-      'spire',
+      'gold-lattice',
+      '#a16207',
     ),
-    bld(183, 120, 185, 1),
-    // The Gherkin
-    bld(303, 94, 270, 2, 'dome'),
-    bld(397, 118, 205, 0),
-    // The Shard (sharp glass pyramid)
+    bld(182, 118, 185, 1),
+    // The Gherkin (diamond-grid rounded bullet tower!)
     poly(
       [
-        { x: 515, y: H },
-        { x: 572, y: H - 395 },
-        { x: 630, y: H },
+        { x: 315, y: H },
+        { x: 304, y: H - 170 },
+        { x: 316, y: H - 255 },
+        { x: 348, y: H - 292 },
+        { x: 380, y: H - 255 },
+        { x: 392, y: H - 170 },
+        { x: 381, y: H },
       ],
       2,
-      'spire',
-      '#bae6fd',
+      'gherkin',
+      '#2c5e63',
     ),
-    bld(630, 115, 200, 1),
-    // Tower Bridge twin towers + deck
-    bld(745, 255, 140, 3, 'bridge-deck'),
-    bld(785, 36, 260, 3, 'bridge-tower'),
-    bld(925, 36, 260, 3, 'bridge-tower'),
-    bld(1000, 200, 185, 0),
+    bld(394, 118, 200, 0),
+    // The Shard (faceted glass pyramid spire!)
+    poly(
+      [
+        { x: 512, y: H },
+        { x: 572, y: H - 405 },
+        { x: 632, y: H },
+      ],
+      2,
+      'shard',
+      '#93c5fd',
+    ),
+    bld(632, 112, 198, 1),
+    // Tower Bridge twin Gothic towers + high walkway + suspension cables
+    bld(744, 260, 140, 3, 'bridge-deck', 90, '#64748b'),
+    bld(786, 36, 268, 3, 'bridge-tower', 91, '#9a8470'),
+    bld(926, 36, 268, 3, 'bridge-tower', 92, '#9a8470'),
+    { kind: 'rect', x: 822, y: H - 245, width: 104, height: 14, colorIndex: 2, style: 'bridge-deck', accent: '#93c5fd' },
+    bld(1004, 196, 185, 0),
   ];
   return {
     id: 'london',
@@ -416,14 +500,19 @@ function makeLondon(): LocationSpec {
     region: 'UK',
     category: 'city',
     skyMood: 'twilight',
+    backdrop: 'city-depth',
+    cables: [
+      { x1: 744, y1: H - 140, x2: 804, y2: H - 258, sag: 32, color: '#60a5fa', suspenderCount: 5, deckY: H - 140 },
+      { x1: 944, y1: H - 258, x2: 1004, y2: H - 140, sag: 32, color: '#60a5fa', suspenderCount: 5, deckY: H - 140 },
+    ],
     shapes,
     spawnSpots: [
-      { x: 58, y: H - 170 },
+      { x: 56, y: H - 170 },
       { x: 242, y: H - 185 },
-      { x: 456, y: H - 205 },
-      { x: 688, y: H - 200 },
+      { x: 454, y: H - 200 },
+      { x: 688, y: H - 198 },
       { x: 874, y: H - 140 },
-      { x: 1100, y: H - 185 },
+      { x: 1102, y: H - 185 },
     ],
   };
 }
@@ -432,19 +521,20 @@ function makeTokyo(): LocationSpec {
   const shapes: TerrainShape[] = [
     bld(0, 125, 180, 0),
     bld(125, 110, 235, 1),
-    // Tokyo Tower (red & white tapered lattice)
+    // Tokyo Tower (red & white iron lattice!)
     bld(235, 165, 130, 2),
     poly(
       [
-        { x: 266, y: H - 130 },
-        { x: 310, y: H - 365 },
-        { x: 326, y: H - 365 },
-        { x: 370, y: H - 130 },
+        { x: 264, y: H - 130 },
+        { x: 310, y: H - 370 },
+        { x: 326, y: H - 370 },
+        { x: 372, y: H - 130 },
       ],
       3,
-      'landmark',
+      'eiffel-lattice',
       '#ef4444',
     ),
+    bld(315, 6, 398, 3, 'beacon-spire', 44, '#ffffff'),
     // Shinjuku high-rises
     bld(400, 115, 240, 0),
     bld(515, 125, 205, 2),
@@ -454,14 +544,15 @@ function makeTokyo(): LocationSpec {
     poly(
       [
         { x: 794, y: H - 145 },
-        { x: 820, y: H - 390 },
-        { x: 830, y: H - 390 },
+        { x: 820, y: H - 398 },
+        { x: 830, y: H - 398 },
         { x: 856, y: H - 145 },
       ],
       2,
-      'spire',
+      'shard',
       '#e2e8f0',
     ),
+    bld(822, 6, 424, 2, 'beacon-spire', 50, '#38bdf8'),
     bld(900, 145, 215, 1),
     bld(1045, 155, 175, 0),
   ];
@@ -489,24 +580,26 @@ function makeSydney(): LocationSpec {
   const shapes: TerrainShape[] = [
     bld(0, 130, 195, 0),
     bld(130, 115, 245, 1),
-    // Harbour Bridge arch over water
+    // Sydney Harbour Bridge steel arch + stone pylons
     bld(245, 340, 135, 2, 'bridge-deck'),
+    bld(258, 28, 225, 3, 'bridge-tower', 10, '#94a3b8'),
+    bld(544, 28, 225, 3, 'bridge-tower', 11, '#94a3b8'),
     {
       kind: 'arch',
       cx: 415,
       baseY: H - 135,
       outerRx: 145,
-      outerRy: 145,
+      outerRy: 148,
       thickness: 20,
       colorIndex: 0,
       style: 'harbour-bridge',
     },
-    // Sydney Opera House sails!
-    bld(585, 250, 125, 2),
+    // Sydney Opera House overlapping gleaming white shells!
+    bld(585, 250, 125, 2, 'deck'),
     poly(
       [
-        { x: 600, y: H - 125 },
-        { x: 648, y: H - 245 },
+        { x: 598, y: H - 125 },
+        { x: 646, y: H - 245 },
         { x: 695, y: H - 125 },
       ],
       2,
@@ -515,25 +608,24 @@ function makeSydney(): LocationSpec {
     ),
     poly(
       [
-        { x: 668, y: H - 125 },
-        { x: 726, y: H - 275 },
-        { x: 772, y: H - 125 },
+        { x: 664, y: H - 125 },
+        { x: 726, y: H - 282 },
+        { x: 774, y: H - 125 },
       ],
       2,
       'sail',
-      '#f8fafc',
+      '#ffffff',
     ),
     poly(
       [
-        { x: 742, y: H - 125 },
-        { x: 786, y: H - 215 },
-        { x: 825, y: H - 125 },
+        { x: 740, y: H - 125 },
+        { x: 786, y: H - 222 },
+        { x: 828, y: H - 125 },
       ],
       2,
       'sail',
-      '#f8fafc',
+      '#e2e8f0',
     ),
-    // CBD + Sydney Tower
     bld(835, 115, 225, 1),
     bld(950, 125, 260, 0),
     bld(1075, 125, 190, 3),
@@ -559,9 +651,7 @@ function makeSydney(): LocationSpec {
 
 function makeCairo(): LocationSpec {
   const shapes: TerrainShape[] = [
-    // Desert sandstone mesas + Great Pyramids of Giza
     bld(0, 195, 155, 3, 'deck'),
-    // Pyramid 1 (Menkaure)
     poly(
       [
         { x: 175, y: H },
@@ -572,7 +662,6 @@ function makeCairo(): LocationSpec {
       'pyramid',
       '#d9a05b',
     ),
-    // Great Pyramid of Khufu (center giant!)
     poly(
       [
         { x: 390, y: H },
@@ -583,7 +672,6 @@ function makeCairo(): LocationSpec {
       'pyramid',
       '#e3b26f',
     ),
-    // Pyramid of Khafre
     poly(
       [
         { x: 730, y: H },
@@ -594,10 +682,8 @@ function makeCairo(): LocationSpec {
       'pyramid',
       '#cf9650',
     ),
-    // Desert floor & flat right sandstone plateau
     bld(0, WORLD_WIDTH, 115, 3, 'deck'),
     bld(1015, 185, 165, 3, 'deck'),
-    // Sphinx-style low platform in front
     bld(450, 115, 155, 3, 'deck'),
   ];
   return {
@@ -619,10 +705,8 @@ function makeCairo(): LocationSpec {
 
 function makeRio(): LocationSpec {
   const shapes: TerrainShape[] = [
-    // Beachfront Copacabana towers
     bld(0, 115, 175, 1),
     bld(115, 115, 205, 2),
-    // Sugarloaf Mountain granite monolith
     poly(
       [
         { x: 220, y: H },
@@ -635,9 +719,7 @@ function makeRio(): LocationSpec {
       'mountain',
       '#4f6b5a',
     ),
-    // Bay shoreline floor
     bld(220, 760, 115, 2, 'deck'),
-    // Corcovado mountain + Christ the Redeemer peak
     poly(
       [
         { x: 530, y: H },
@@ -649,10 +731,8 @@ function makeRio(): LocationSpec {
       'mountain',
       '#3d5c4a',
     ),
-    // Statue silhouette on peak
-    bld(664, 12, 365, 2, 'spire'),
-    { kind: 'rect', x: 646, y: H - 358, width: 48, height: 8, colorIndex: 2, style: 'spire', accent: '#f8fafc' },
-    // Right hillside condos
+    bld(664, 12, 368, 2, 'spire', 10, '#f8fafc'),
+    { kind: 'rect', x: 644, y: H - 360, width: 52, height: 8, colorIndex: 2, style: 'spire', accent: '#f8fafc' },
     bld(850, 115, 195, 3),
     bld(965, 115, 225, 1),
     bld(1080, 120, 175, 0),
@@ -678,20 +758,14 @@ function makeRio(): LocationSpec {
 
 function makeJungle(): LocationSpec {
   const shapes: TerrainShape[] = [
-    // Jungle forest floor
     bld(0, WORLD_WIDTH, 110, 2, 'deck'),
-    // Giant Redwood Tree 1 + Treehouse deck
     bld(65, 68, 225, 3, 'trunk'),
     bld(30, 145, 240, 2, 'deck'),
-    // Giant Redwood Tree 2 (tall canopy tower)
     bld(285, 76, 305, 3, 'trunk'),
     bld(245, 160, 320, 2, 'deck'),
-    // Suspension bridge between trees
     { kind: 'rect', x: 405, y: H - 195, width: 175, height: 22, colorIndex: 3, style: 'bridge-deck' },
-    // Central Giant Kong Tree
     bld(555, 92, 345, 3, 'trunk'),
     bld(515, 172, 360, 2, 'deck'),
-    // Right canopy trees & wooden bridge
     { kind: 'rect', x: 687, y: H - 210, width: 145, height: 22, colorIndex: 3, style: 'bridge-deck' },
     bld(830, 74, 290, 3, 'trunk'),
     bld(792, 154, 305, 2, 'deck'),
@@ -719,9 +793,7 @@ function makeJungle(): LocationSpec {
 
 function makeVolcano(): LocationSpec {
   const shapes: TerrainShape[] = [
-    // Basalt base floor
     bld(0, WORLD_WIDTH, 115, 0, 'deck'),
-    // Left volcanic crag
     poly(
       [
         { x: 0, y: H },
@@ -733,7 +805,6 @@ function makeVolcano(): LocationSpec {
       0,
       'volcano',
     ),
-    // Left-mid lava mesa
     poly(
       [
         { x: 225, y: H },
@@ -745,7 +816,6 @@ function makeVolcano(): LocationSpec {
       0,
       'volcano',
     ),
-    // Central Volcano Cone with flat caldera rim
     poly(
       [
         { x: 460, y: H },
@@ -758,7 +828,6 @@ function makeVolcano(): LocationSpec {
       0,
       'volcano',
     ),
-    // Right basalt ridges
     poly(
       [
         { x: 720, y: H },
@@ -801,9 +870,7 @@ function makeVolcano(): LocationSpec {
 
 function makeAlps(): LocationSpec {
   const shapes: TerrainShape[] = [
-    // Alpine valley snow base
     bld(0, WORLD_WIDTH, 115, 2, 'deck'),
-    // Left peak + flat ski deck
     poly(
       [
         { x: 0, y: H },
@@ -815,7 +882,6 @@ function makeAlps(): LocationSpec {
       2,
       'snow-peak',
     ),
-    // Sharp Matterhorn-style middle-left peak
     poly(
       [
         { x: 220, y: H },
@@ -825,9 +891,7 @@ function makeAlps(): LocationSpec {
       2,
       'snow-peak',
     ),
-    // Cozy alpine chalet ledge in center valley
     bld(470, 260, 175, 3, 'deck'),
-    // High glacier peak right-center
     poly(
       [
         { x: 710, y: H },
@@ -837,7 +901,6 @@ function makeAlps(): LocationSpec {
       2,
       'snow-peak',
     ),
-    // Right ski ridge
     poly(
       [
         { x: 930, y: H },
@@ -868,11 +931,11 @@ function makeAlps(): LocationSpec {
 }
 
 export const LOCATION_BUILDERS: Record<ConcreteLocationId, () => LocationSpec> = {
-  nyc: makeNYC,
   chicago: makeChicago,
+  atlanta: makeAtlanta,
+  nyc: makeNYC,
   'san-francisco': makeSanFrancisco,
   seattle: makeSeattle,
-  atlanta: makeAtlanta,
   'st-louis': makeStLouis,
   paris: makeParis,
   london: makeLondon,
@@ -886,11 +949,11 @@ export const LOCATION_BUILDERS: Record<ConcreteLocationId, () => LocationSpec> =
 };
 
 export const ALL_LOCATIONS: ConcreteLocationId[] = [
-  'nyc',
   'chicago',
+  'atlanta',
+  'nyc',
   'san-francisco',
   'seattle',
-  'atlanta',
   'st-louis',
   'paris',
   'london',

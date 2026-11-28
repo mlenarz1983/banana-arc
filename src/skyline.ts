@@ -1,16 +1,13 @@
 import {
   GORILLA_HAND_OFFSET_Y,
+  GORILLA_HIT_CENTER_Y,
   MAX_CLIMB_PX,
-  SUN_X,
-  SUN_Y,
-  TIRE_RADIUS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from './constants';
 import { ALL_LOCATIONS, buildLocation } from './locations';
 import { findVerifiedSolution } from './physics';
 import type {
-  BouncyTire,
   ConcreteLocationId,
   Crater,
   LocationId,
@@ -43,8 +40,7 @@ function pointInPolygon(x: number, y: number, pts: Vec2[]): boolean {
 
 /**
  * Pixel-accurate destructible terrain collision mask supporting rectangles,
- * polygons (pyramids, spires, mountains, sails), and hollow arches (Gateway Arch, bridges).
- * Runs purely in TypeScript/Uint8Array so it works identically in Node tests and Browser Canvas!
+ * polygons (tapered towers, pyramids, spires, mountains, sails), and hollow arches.
  */
 export class SkylineTerrain {
   readonly width: number;
@@ -196,54 +192,6 @@ export class SkylineTerrain {
   }
 }
 
-const BALLOON_COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6'];
-
-/**
- * Places 1-2 floating DK Bouncy Tires in open sky space clear of terrain, gorillas, and the Sun.
- */
-export function placeBouncyTires(
-  terrain: SkylineTerrain,
-  playerPositions: Vec2[],
-  rng: () => number,
-  enabled: boolean,
-): BouncyTire[] {
-  if (!enabled) return [];
-
-  const tires: BouncyTire[] = [];
-  const zones = [
-    { xMin: 260, xMax: 495, yMin: 140, yMax: 300 },
-    { xMin: 705, xMax: 940, yMin: 140, yMax: 300 },
-  ];
-
-  zones.forEach((zone, zIdx) => {
-    for (let attempt = 0; attempt < 25; attempt++) {
-      const tx = Math.round(zone.xMin + rng() * (zone.xMax - zone.xMin));
-      const ty = Math.round(zone.yMin + rng() * (zone.yMax - zone.yMin));
-
-      if (Math.hypot(tx - SUN_X, ty - SUN_Y) < 95) continue;
-      if (playerPositions.some((p) => Math.hypot(tx - p.x, ty - (p.y - 24)) < 110)) continue;
-      if (!terrain.isClearCircle(tx, ty, TIRE_RADIUS + 26)) continue;
-      if (tires.some((other) => Math.hypot(tx - other.x, ty - other.y) < 140)) continue;
-
-      tires.push({
-        id: zIdx + 1,
-        x: tx,
-        y: ty,
-        radius: TIRE_RADIUS,
-        balloonColor: BALLOON_COLORS[(zIdx + Math.floor(rng() * 4)) % BALLOON_COLORS.length],
-        phaseOffset: rng() * Math.PI * 2,
-        bounceAnim: 0,
-      });
-      break;
-    }
-  });
-
-  return tires;
-}
-
-/**
- * Picks well-spaced spawn positions on the location's rooftops/ledges for 2-4 players.
- */
 export function selectSpawnPositions(
   terrain: SkylineTerrain,
   playerCount: number,
@@ -256,12 +204,12 @@ export function selectSpawnPositions(
     })
     .filter((s) => s.y < terrain.height - 20 && s.y > 140);
 
-  // Pick evenly spread indices from left to right
   const chosen: Array<{ x: number; y: number; zoneIndex: number }> = [];
   if (spots.length >= playerCount) {
     if (playerCount <= 2) {
       const leftIdx = Math.floor(rng() * Math.min(2, spots.length - 1));
-      const rightIdx = spots.length - 1 - Math.floor(rng() * Math.min(2, spots.length - 1 - leftIdx));
+      const rightIdx =
+        spots.length - 1 - Math.floor(rng() * Math.min(2, spots.length - 1 - leftIdx));
       chosen.push(spots[leftIdx], spots[rightIdx]);
     } else {
       for (let i = 0; i < playerCount; i++) {
@@ -270,7 +218,6 @@ export function selectSpawnPositions(
       }
     }
   } else {
-    // Fallback evenly spaced across width
     for (let i = 0; i < playerCount; i++) {
       const x = Math.round(120 + (i / Math.max(1, playerCount - 1)) * (WORLD_WIDTH - 240));
       const y = terrain.getSurfaceY(x, 0);
@@ -278,7 +225,6 @@ export function selectSpawnPositions(
     }
   }
 
-  // Shuffle assignment across players so Player 1 doesn't always stand on the left
   for (let i = chosen.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [chosen[i], chosen[j]] = [chosen[j], chosen[i]];
@@ -291,21 +237,19 @@ export interface SolvableRoundSetup {
   terrain: SkylineTerrain;
   locationId: ConcreteLocationId;
   spawnPositions: Array<{ x: number; y: number; zoneIndex: number }>;
-  tires: BouncyTire[];
   windAccel: number;
 }
 
 /**
- * Generates a round for a specific or random iconic location, places DK Bouncy Tires,
- * and verifies BEFORE returning that every spawned gorilla has an unobstructed integer
- * ballistic solution (with zero self-blast!) to at least one opponent.
+ * Generates a clean-sky round (no pre-placed clutter!) for a specific or random iconic location,
+ * verifying BEFORE returning that every gorilla has an unobstructed integer ballistic solution
+ * with zero self-blast!
  */
 export function generateSolvableRound(
   playerCount: number,
   gravity: number,
   allowWind: boolean,
   requestedLocation: LocationId = 'random',
-  enableTires = true,
   baseSeed = Date.now(),
   excludeLocation?: ConcreteLocationId,
 ): SolvableRoundSetup {
@@ -337,7 +281,6 @@ export function generateSolvableRound(
     }
 
     const spawnPositions = selectSpawnPositions(terrain, playerCount, rng);
-    const tires = placeBouncyTires(terrain, spawnPositions, rng, enableTires && attempt < 16);
 
     let allSolvable = true;
     for (let i = 0; i < spawnPositions.length; i++) {
@@ -347,14 +290,14 @@ export function generateSolvableRound(
       };
       const ownerHit: Vec2 = {
         x: spawnPositions[i].x,
-        y: spawnPositions[i].y - 22,
+        y: spawnPositions[i].y - GORILLA_HIT_CENTER_Y,
       };
       let hasTarget = false;
       for (let j = 0; j < spawnPositions.length; j++) {
         if (i === j) continue;
         const target: Vec2 = {
           x: spawnPositions[j].x,
-          y: spawnPositions[j].y - 22,
+          y: spawnPositions[j].y - GORILLA_HIT_CENTER_Y,
         };
         const sol = findVerifiedSolution(
           origin,
@@ -362,7 +305,7 @@ export function generateSolvableRound(
           gravity,
           windAccel,
           (x, y) => terrain.isSolid(x, y),
-          tires,
+          [],
           ownerHit,
         );
         if (sol) {
@@ -377,17 +320,15 @@ export function generateSolvableRound(
     }
 
     if (allSolvable) {
-      return { terrain, locationId: chosenLocId, spawnPositions, tires, windAccel };
+      return { terrain, locationId: chosenLocId, spawnPositions, windAccel };
     }
   }
 
-  // Fallback: calm air, no obstructing tires
   const fallbackSpawns = selectSpawnPositions(terrain, playerCount, () => 0.2);
   return {
     terrain,
     locationId: chosenLocId,
     spawnPositions: fallbackSpawns,
-    tires: [],
     windAccel: 0,
   };
 }
@@ -400,11 +341,6 @@ export interface MoveResult {
   reason?: 'wall' | 'edge' | 'occupied' | 'pit';
 }
 
-/**
- * Downhill-only rooftop/terrain movement:
- * - Can walk across roofs, slopes (downhill or gentle <= MAX_CLIMB_PX), and drop down to lower levels
- * - Cannot climb taller walls or steep cliffs
- */
 export function tryMoveGorilla(
   terrain: SkylineTerrain,
   currentX: number,
@@ -427,14 +363,14 @@ export function tryMoveGorilla(
   for (let s = 0; s < steps; s++) {
     const nextX = x + dir;
 
-    if (nextX < 24 || nextX > terrain.width - 24) {
+    if (nextX < 28 || nextX > terrain.width - 28) {
       blockReason = 'edge';
       break;
     }
 
     let blockedByGorilla = false;
     for (const other of otherGorillas) {
-      if (Math.abs(nextX - other.x) < 34 && Math.abs(y - other.y) < 40) {
+      if (Math.abs(nextX - other.x) < 42 && Math.abs(y - other.y) < 52) {
         blockedByGorilla = true;
         break;
       }
@@ -444,9 +380,8 @@ export function tryMoveGorilla(
       break;
     }
 
-    // Check wall rising > MAX_CLIMB_PX above feet
     let hitWall = false;
-    for (let checkY = y - MAX_CLIMB_PX - 1; checkY >= Math.max(0, y - 34); checkY -= 2) {
+    for (let checkY = y - MAX_CLIMB_PX - 1; checkY >= Math.max(0, y - 46); checkY -= 2) {
       if (terrain.isSolid(nextX, checkY)) {
         hitWall = true;
         break;
