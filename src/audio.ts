@@ -239,26 +239,27 @@ class SoundEngine {
     osc.stop(now + 0.11);
   }
 
-  playBoing(): void {
+  playMirrorPing(bounceNum = 1): void {
     const ctx = this.ensureContext();
     if (!ctx) return;
     const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(160, now);
-    osc.frequency.exponentialRampToValueAtTime(520, now + 0.12);
-    osc.frequency.exponentialRampToValueAtTime(280, now + 0.24);
-    osc.frequency.exponentialRampToValueAtTime(410, now + 0.34);
+    const baseFreq = 680 + Math.min(bounceNum - 1, 4) * 140;
 
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(0.22, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.37);
+    // Crisp crystalline mirror chime (fundamental + fifth overtone)
+    [baseFreq, baseFreq * 1.5].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = idx === 0 ? 'sine' : 'triangle';
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.06, now + 0.08);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(idx === 0 ? 0.16 : 0.08, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.3);
+    });
   }
 }
 

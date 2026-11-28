@@ -1,6 +1,7 @@
 import { CHARACTERS } from './characters';
 import {
   GORILLA_HAND_OFFSET_Y,
+  GORILLA_SCALE,
   PIXELS_PER_METER,
   SUN_RADIUS,
   SUN_X,
@@ -8,13 +9,15 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from './constants';
-import { computeVelocityComponents, sampleTrajectory } from './physics';
+import { computeVelocityComponents, degToRad, sampleTrajectory } from './physics';
 import type { SkylineTerrain } from './skyline';
 import type {
   Banana,
-  BouncyTire,
+  CableSpan,
+  CharacterId,
   Cloud,
   FloatingText,
+  MirrorPanel,
   Particle,
   PlanetId,
   Player,
@@ -31,7 +34,8 @@ export interface RenderState {
   gravity: number;
   windAccel: number;
   terrain: SkylineTerrain;
-  tires: BouncyTire[];
+  mirrors: MirrorPanel[];
+  draftMirror: MirrorPanel | null;
   players: Player[];
   activePlayerIndex: number;
   aimAngle: number;
@@ -53,10 +57,10 @@ export interface RenderState {
 }
 
 const MODERN_PALETTE = [
-  { body: '#2c3e55', shade: '#1f2d40', trim: '#466080', winLit: '#ffd97d', winOff: '#1a2534' },
-  { body: '#4a4054', shade: '#372e40', trim: '#665975', winLit: '#ffe29a', winOff: '#292230' },
-  { body: '#2f5259', shade: '#213c42', trim: '#46747d', winLit: '#ffdf85', winOff: '#192e33' },
-  { body: '#63443c', shade: '#4a322c', trim: '#825a50', winLit: '#ffd573', winOff: '#36231e' },
+  { body: '#26364a', shade: '#1a2636', trim: '#466182', winLit: '#ffd97d', winOff: '#16202e' },
+  { body: '#453c52', shade: '#332b3d', trim: '#665a78', winLit: '#ffe29a', winOff: '#26202e' },
+  { body: '#2c4f57', shade: '#1e3940', trim: '#4a7a85', winLit: '#ffdf85', winOff: '#162c30' },
+  { body: '#5f4038', shade: '#462e28', trim: '#875c51', winLit: '#ffd573', winOff: '#33201b' },
 ];
 
 const RETRO_PALETTE = [
@@ -70,6 +74,374 @@ function hash2d(seed: number, x: number, y: number): number {
   let h = (seed ^ (x * 374761393) ^ (y * 668265263)) >>> 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/**
+ * Shared character body/headgear drawing helper used BOTH in-game (at GORILLA_SCALE)
+ * and in the Setup modal's visual avatar portrait cards!
+ */
+export function drawGorillaCharacter(
+  ctx: CanvasRenderingContext2D,
+  characterId: CharacterId,
+  animation: Player['animation'],
+  theme: ThemeMode,
+  timeSec: number,
+): void {
+  const ch = CHARACTERS[characterId];
+  const armsUp = animation === 'celebrate' || animation === 'throwing';
+
+  if (theme === 'retro') {
+    const fur = characterId === 'robo-kong' ? '#888888' : '#cc7a33';
+    const chest =
+      characterId === 'astro-ape'
+        ? '#ffffff'
+        : characterId === 'robo-kong'
+          ? '#cccccc'
+          : '#e6a15c';
+
+    ctx.fillStyle = fur;
+    ctx.fillRect(-13, -12, 10, 12);
+    ctx.fillRect(3, -12, 10, 12);
+    ctx.fillRect(-15, -30, 30, 20);
+    ctx.fillStyle = chest;
+    ctx.fillRect(-9, -27, 18, 13);
+    ctx.fillStyle = fur;
+    ctx.fillRect(-9, -41, 18, 12);
+
+    if (characterId === 'king-kong') {
+      ctx.fillStyle = '#ffff55';
+      ctx.fillRect(-9, -48, 18, 7);
+      ctx.fillRect(-9, -51, 4, 3);
+      ctx.fillRect(-2, -52, 4, 4);
+      ctx.fillRect(5, -51, 4, 3);
+    } else if (characterId === 'astro-ape') {
+      ctx.strokeStyle = '#55ffff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-12, -45, 24, 17);
+    } else if (characterId === 'chef-nana') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-10, -53, 20, 12);
+    } else if (characterId === 'dj-kong') {
+      ctx.fillStyle = '#55ffff';
+      ctx.fillRect(-12, -41, 4, 9);
+      ctx.fillRect(8, -41, 4, 9);
+      ctx.fillRect(-10, -45, 20, 4);
+    } else if (characterId === 'capt-bongo') {
+      ctx.fillStyle = '#222222';
+      ctx.fillRect(-12, -47, 24, 7);
+      ctx.fillStyle = '#ffff55';
+      ctx.fillRect(-10, -43, 20, 2);
+    } else if (characterId === 'prof-peel') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-10, -45, 20, 4);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-8, -39, 6, 5);
+      ctx.strokeRect(2, -39, 6, 5);
+    } else {
+      ctx.fillStyle = ch.color;
+      ctx.fillRect(-10, -44, 20, 5);
+    }
+
+    ctx.fillStyle = characterId === 'robo-kong' ? '#55ffff' : '#000000';
+    ctx.fillRect(-6, -37, 4, 3);
+    ctx.fillRect(2, -37, 4, 3);
+
+    ctx.fillStyle = fur;
+    const alt = animation === 'celebrate' && Math.floor(timeSec * 8) % 2 === 0;
+    if (armsUp) {
+      ctx.fillRect(-22, alt ? -42 : -38, 8, 16);
+      ctx.fillRect(14, alt ? -38 : -42, 8, 16);
+    } else {
+      ctx.fillRect(-22, -28, 7, 16);
+      ctx.fillRect(15, -28, 7, 16);
+    }
+    return;
+  }
+
+  // Modern detailed gorilla with crisp contrast outline for TV visibility
+  const fur = ch.furColor;
+  const chest = ch.chestColor;
+  const skin = characterId === 'robo-kong' ? '#cbd5e1' : '#d2a684';
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.34)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 19, 4.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const wave = animation === 'celebrate' ? Math.sin(timeSec * 14) * 5 : 0;
+
+  // Arms (with dark contrast halo)
+  ctx.lineCap = 'round';
+  for (const [stroke, width] of [
+    ['rgba(15,23,42,0.75)', 11],
+    [fur, 8.2],
+  ] as const) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    if (armsUp) {
+      ctx.moveTo(-13, -24);
+      ctx.quadraticCurveTo(-24, -32, -19, -42 + wave);
+      ctx.moveTo(13, -24);
+      ctx.quadraticCurveTo(24, -32, 19, -42 - wave);
+    } else {
+      ctx.moveTo(-13, -24);
+      ctx.quadraticCurveTo(-22, -16, -18, -8);
+      ctx.moveTo(13, -24);
+      ctx.quadraticCurveTo(22, -16, 18, -8);
+    }
+    ctx.stroke();
+  }
+
+  // Colored wristbands
+  ctx.strokeStyle = ch.color;
+  ctx.lineWidth = 4.2;
+  ctx.beginPath();
+  if (armsUp) {
+    ctx.moveTo(-21, -37 + wave);
+    ctx.lineTo(-17, -37 + wave);
+    ctx.moveTo(17, -37 - wave);
+    ctx.lineTo(21, -37 - wave);
+  } else {
+    ctx.moveTo(-20, -11);
+    ctx.lineTo(-16, -11);
+    ctx.moveTo(16, -11);
+    ctx.lineTo(20, -11);
+  }
+  ctx.stroke();
+
+  // Legs
+  ctx.fillStyle = fur;
+  ctx.strokeStyle = 'rgba(15,23,42,0.72)';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.roundRect(-12, -12, 9, 12, 4);
+  ctx.roundRect(3, -12, 9, 12, 4);
+  ctx.fill();
+  ctx.stroke();
+
+  // Torso
+  ctx.beginPath();
+  ctx.ellipse(0, -21, 16, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = chest;
+  ctx.beginPath();
+  ctx.ellipse(0, -20, 10, 8.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Head
+  ctx.fillStyle = fur;
+  ctx.beginPath();
+  ctx.arc(0, -35, 11.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Face oval
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.ellipse(0, -33, 7.8, 6.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eyes / Visor
+  if (characterId === 'robo-kong') {
+    ctx.fillStyle = '#06b6d4';
+    ctx.fillRect(-7.5, -37.2, 15, 4.8);
+    ctx.fillStyle = '#ecfeff';
+    ctx.fillRect(-5.5, -36.2, 5.5, 2.2);
+  } else if (animation === 'ouch') {
+    ctx.strokeStyle = '#1f1a18';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-5, -36);
+    ctx.lineTo(-1, -32);
+    ctx.moveTo(-1, -36);
+    ctx.lineTo(-5, -32);
+    ctx.moveTo(1, -36);
+    ctx.lineTo(5, -32);
+    ctx.moveTo(5, -36);
+    ctx.lineTo(1, -32);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = '#1f1a18';
+    ctx.beginPath();
+    ctx.arc(-3.6, -34.5, 1.9, 0, Math.PI * 2);
+    ctx.arc(3.6, -34.5, 1.9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#1f1a18';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(0, -31.5, 3.6, 0.1 * Math.PI, 0.9 * Math.PI);
+    ctx.stroke();
+  }
+
+  // Distinct Character Headgear (bold & unmistakable on TV!)
+  switch (characterId) {
+    case 'king-kong': {
+      ctx.fillStyle = '#fbbf24';
+      ctx.strokeStyle = '#78350f';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-10, -43);
+      ctx.lineTo(-10, -53);
+      ctx.lineTo(-4, -47);
+      ctx.lineTo(0, -55);
+      ctx.lineTo(4, -47);
+      ctx.lineTo(10, -53);
+      ctx.lineTo(10, -43);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#dc2626';
+      ctx.fillRect(-10.5, -44, 21, 4);
+      break;
+    }
+    case 'astro-ape': {
+      ctx.strokeStyle = '#93c5fd';
+      ctx.fillStyle = 'rgba(147, 197, 253, 0.28)';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(0, -35, 15.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, -35, 12.2, -2.5, -1.65);
+      ctx.stroke();
+      break;
+    }
+    case 'prof-peel': {
+      ctx.fillStyle = '#f1f5f9';
+      ctx.beginPath();
+      ctx.arc(-10, -42, 4.5, 0, Math.PI * 2);
+      ctx.arc(10, -42, 4.5, 0, Math.PI * 2);
+      ctx.arc(0, -47, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(-3.8, -34.5, 3.8, 0, Math.PI * 2);
+      ctx.arc(3.8, -34.5, 3.8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.moveTo(-6, -26);
+      ctx.lineTo(0, -23.5);
+      ctx.lineTo(-6, -21);
+      ctx.moveTo(6, -26);
+      ctx.lineTo(0, -23.5);
+      ctx.lineTo(6, -21);
+      ctx.fill();
+      break;
+    }
+    case 'capt-bongo': {
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.moveTo(-16, -42);
+      ctx.quadraticCurveTo(0, -58, 16, -42);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // Skull dot + eyepatch
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(0, -47, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(3.6, -34.5, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'dj-kong': {
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-8.5, -37.2, 17, 4.8);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 3.2;
+      ctx.beginPath();
+      ctx.arc(0, -35, 13.5, Math.PI, 0);
+      ctx.stroke();
+      ctx.fillStyle = '#0ea5e9';
+      ctx.fillRect(-16, -40, 5.5, 10);
+      ctx.fillRect(10.5, -40, 5.5, 10);
+      break;
+    }
+    case 'chef-nana': {
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1.2;
+      ctx.fillRect(-9.5, -50, 19, 8.5);
+      ctx.beginPath();
+      ctx.arc(-6.5, -51, 6, 0, Math.PI * 2);
+      ctx.arc(0, -54.5, 7, 0, Math.PI * 2);
+      ctx.arc(6.5, -51, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ea580c';
+      ctx.fillRect(-8, -26, 16, 4);
+      break;
+    }
+    case 'ninja-chimp': {
+      ctx.fillStyle = '#f43f5e';
+      ctx.fillRect(-11.5, -43.5, 23, 5);
+      const flutter = Math.sin(timeSec * 8) * 3;
+      ctx.beginPath();
+      ctx.moveTo(10.5, -41);
+      ctx.lineTo(22, -44 + flutter);
+      ctx.lineTo(19, -37 + flutter);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case 'robo-kong': {
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(0, -46);
+      ctx.lineTo(0, -55);
+      ctx.stroke();
+      ctx.fillStyle = Math.sin(timeSec * 8) > 0 ? '#22d3ee' : '#f43f5e';
+      ctx.beginPath();
+      ctx.arc(0, -56, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+  }
+}
+
+/**
+ * Renders a crisp visual portrait of any gorilla character onto a small Setup modal <canvas>.
+ */
+export function renderCharacterAvatar(
+  canvas: HTMLCanvasElement,
+  characterId: CharacterId,
+  theme: ThemeMode = 'modern',
+): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const ch = CHARACTERS[characterId];
+  const grad = ctx.createRadialGradient(w / 2, h * 0.4, 4, w / 2, h / 2, w * 0.65);
+  grad.addColorStop(0, `${ch.color}38`);
+  grad.addColorStop(1, 'rgba(15, 23, 42, 0.08)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.translate(w / 2, h * 0.91);
+  const scale = (h / 72) * 1.05;
+  ctx.scale(scale, scale);
+  drawGorillaCharacter(ctx, characterId, 'idle', theme, 0.4);
+  ctx.restore();
 }
 
 export class GameRenderer {
@@ -144,12 +516,32 @@ export class GameRenderer {
     if (shape.kind === 'rect') {
       const style = shape.style ?? 'building';
 
+      if (style === 'bean') {
+        // Chicago Cloud Gate ("The Bean") gleaming mirrored sculpture!
+        ctx.save();
+        const cx = shape.x + shape.width / 2;
+        const cy = shape.y + shape.height * 0.58;
+        const g = ctx.createLinearGradient(shape.x, shape.y, shape.x, shape.y + shape.height);
+        g.addColorStop(0, '#f8fafc');
+        g.addColorStop(0.5, '#94a3b8');
+        g.addColorStop(1, '#334155');
+        ctx.fillStyle = theme === 'retro' ? '#cccccc' : g;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, shape.width * 0.5, shape.height * 0.52, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.65)';
+        ctx.beginPath();
+        ctx.ellipse(cx - 8, cy - 6, shape.width * 0.24, shape.height * 0.16, -0.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
+
       if (style === 'trunk') {
         ctx.fillStyle = theme === 'retro' ? '#aa5500' : '#6b4226';
         ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
         ctx.fillStyle = theme === 'retro' ? '#552200' : '#4f2f1a';
         ctx.fillRect(shape.x + shape.width - 14, shape.y, 14, shape.height);
-        // Bark lines
         ctx.strokeStyle = theme === 'retro' ? '#331100' : 'rgba(40,20,8,0.35)';
         ctx.lineWidth = 2;
         for (let bx = shape.x + 12; bx < shape.x + shape.width - 12; bx += 14) {
@@ -187,19 +579,17 @@ export class GameRenderer {
                       : colors.body);
         ctx.fillStyle = body;
         ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
-        // Top grass/snow/wood ledge
-        ctx.fillStyle =
-          isJungle
-            ? theme === 'retro'
-              ? '#55ff55'
-              : '#4ade80'
-            : isAlps
-              ? '#f8fafc'
-              : isCairo
-                ? '#e5b97a'
-                : isVolcano
-                  ? '#57403b'
-                  : colors.trim;
+        ctx.fillStyle = isJungle
+          ? theme === 'retro'
+            ? '#55ff55'
+            : '#4ade80'
+          : isAlps
+            ? '#f8fafc'
+            : isCairo
+              ? '#e5b97a'
+              : isVolcano
+                ? '#57403b'
+                : colors.trim;
         ctx.fillRect(shape.x, shape.y, shape.width, theme === 'retro' ? 6 : 9);
         return;
       }
@@ -215,30 +605,93 @@ export class GameRenderer {
         ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
         ctx.fillStyle = 'rgba(0,0,0,0.22)';
         ctx.fillRect(shape.x + shape.width - 7, shape.y, 7, shape.height);
-        // Roadway railing stripe on bridge deck
-        if (style === 'bridge-deck') {
+        if (style === 'bridge-tower') {
+          // Cross-braced Art Deco tower struts
+          ctx.fillStyle = 'rgba(255,255,255,0.2)';
+          ctx.fillRect(shape.x, shape.y + 18, shape.width, 6);
+          ctx.fillRect(shape.x, shape.y + 52, shape.width, 6);
+          ctx.fillRect(shape.x, shape.y + 88, shape.width, 6);
+        } else {
           ctx.fillStyle = theme === 'retro' ? '#ffff55' : '#e2e8f0';
           ctx.fillRect(shape.x, shape.y, shape.width, 4);
         }
         return;
       }
 
-      if (style === 'spire') {
-        ctx.fillStyle = theme === 'retro' ? '#ffffff' : shape.accent ?? '#cbd5e1';
+      if (style === 'spire' || style === 'beacon-spire') {
+        ctx.fillStyle = theme === 'retro' ? '#ffffff' : shape.accent ?? '#e2e8f0';
         ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
         return;
       }
 
+      if (style === 'corncob') {
+        // Chicago Marina City scalloped cylindrical balcony rings!
+        ctx.fillStyle = theme === 'retro' ? '#aaaaaa' : shape.accent ?? '#cbd5e1';
+        ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.25)';
+        ctx.fillRect(shape.x + shape.width - 12, shape.y, 12, shape.height);
+        for (let y = shape.y + 10; y < WORLD_HEIGHT - 16; y += 13) {
+          ctx.fillStyle = theme === 'retro' ? '#444444' : '#334155';
+          ctx.fillRect(shape.x + 2, y, shape.width - 4, 5);
+          ctx.fillStyle = theme === 'retro' ? '#ffffff' : '#f1f5f9';
+          ctx.fillRect(shape.x, y + 5, shape.width, 3);
+        }
+        return;
+      }
+
+      if (style === 'glass-cylinder') {
+        // Reflective glass curtain wall (Atlanta Westin Peachtree, Chicago Aon, SF Salesforce)
+        const baseColor = theme === 'retro' ? '#00aaaa' : shape.accent ?? '#3b6e8c';
+        ctx.fillStyle = baseColor;
+        ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
+        // Subtle cylindrical sheen gradient
+        if (theme === 'modern') {
+          const g = ctx.createLinearGradient(shape.x, 0, shape.x + shape.width, 0);
+          g.addColorStop(0, 'rgba(15,23,42,0.35)');
+          g.addColorStop(0.32, 'rgba(255,255,255,0.28)');
+          g.addColorStop(0.65, 'rgba(15,23,42,0.08)');
+          g.addColorStop(1, 'rgba(15,23,42,0.45)');
+          ctx.fillStyle = g;
+          ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
+        }
+        // Vertical glass mullions + lit floor strips
+        ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+        ctx.lineWidth = 1.4;
+        for (let vx = shape.x + 10; vx < shape.x + shape.width - 6; vx += 11) {
+          ctx.beginPath();
+          ctx.moveTo(vx, shape.y);
+          ctx.lineTo(vx, WORLD_HEIGHT);
+          ctx.stroke();
+        }
+        for (let wy = shape.y + 16; wy < WORLD_HEIGHT - 12; wy += 18) {
+          ctx.fillStyle = hash2d(shape.windowSeed ?? 7, wy, 1) > 0.4 ? 'rgba(254, 240, 138, 0.52)' : 'rgba(15,23,42,0.22)';
+          ctx.fillRect(shape.x + 6, wy, shape.width - 12, 4);
+        }
+        return;
+      }
+
       // Standard skyscraper / landmark tower
-      ctx.fillStyle = colors.body;
+      const bodyCol = theme === 'retro' ? colors.body : shape.accent ?? colors.body;
+      ctx.fillStyle = bodyCol;
       ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
 
       const shadeW = theme === 'retro' ? 8 : Math.max(10, Math.floor(shape.width * 0.18));
-      ctx.fillStyle = colors.shade;
+      ctx.fillStyle = theme === 'retro' ? colors.shade : 'rgba(0, 0, 0, 0.22)';
       ctx.fillRect(shape.x + shape.width - shadeW, shape.y, shadeW, shape.height);
 
-      ctx.fillStyle = colors.trim;
-      ctx.fillRect(shape.x, shape.y, shape.width, theme === 'retro' ? 4 : 5);
+      ctx.fillStyle = style === 'gold-crown' ? '#fbbf24' : colors.trim;
+      ctx.fillRect(shape.x, shape.y, shape.width, style === 'gold-crown' ? 9 : theme === 'retro' ? 4 : 5);
+
+      if (style === 'twin-crown') {
+        // Atlanta 191 Peachtree twin illuminated Gothic crowns!
+        ctx.fillStyle = '#fef08a';
+        ctx.fillRect(shape.x + 8, shape.y - 12, 26, 12);
+        ctx.fillRect(shape.x + shape.width - 34, shape.y - 12, 26, 12);
+        ctx.strokeStyle = '#92400e';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(shape.x + 8, shape.y - 12, 26, 12);
+        ctx.strokeRect(shape.x + shape.width - 34, shape.y - 12, 26, 12);
+      }
 
       if (theme === 'retro') {
         ctx.strokeStyle = '#000000';
@@ -246,7 +699,6 @@ export class GameRenderer {
         ctx.strokeRect(shape.x + 1, shape.y + 1, shape.width - 2, shape.height);
       }
 
-      // Windows grid (skip narrow spires)
       if (shape.width >= 38 && shape.height >= 60) {
         const cols = Math.max(2, Math.floor((shape.width - 18) / 18));
         const rows = Math.max(3, Math.floor((shape.height - 24) / 22));
@@ -268,20 +720,7 @@ export class GameRenderer {
         }
       }
 
-      // Special architectural accents
-      if (style === 'xbrace') {
-        ctx.strokeStyle = theme === 'retro' ? '#55ffff' : 'rgba(203, 213, 225, 0.35)';
-        ctx.lineWidth = 3;
-        for (let y = shape.y + 10; y < WORLD_HEIGHT - 40; y += 75) {
-          ctx.beginPath();
-          ctx.moveTo(shape.x + 4, y);
-          ctx.lineTo(shape.x + shape.width - 4, y + 70);
-          ctx.moveTo(shape.x + shape.width - 4, y);
-          ctx.lineTo(shape.x + 4, y + 70);
-          ctx.stroke();
-        }
-      } else if (style === 'clock') {
-        // Big Ben clock face
+      if (style === 'clock') {
         const cx = shape.x + shape.width / 2;
         const cy = shape.y + 38;
         ctx.fillStyle = '#fef3c7';
@@ -300,9 +739,9 @@ export class GameRenderer {
         ctx.lineTo(cx + 8, cy + 3);
         ctx.stroke();
       } else if (style === 'dome') {
-        ctx.fillStyle = colors.trim;
+        ctx.fillStyle = shape.accent ?? colors.trim;
         ctx.beginPath();
-        ctx.arc(shape.x + shape.width / 2, shape.y + 8, shape.width * 0.42, Math.PI, 0);
+        ctx.arc(shape.x + shape.width / 2, shape.y + 8, shape.width * 0.46, Math.PI, 0);
         ctx.fill();
       }
       return;
@@ -318,25 +757,138 @@ export class GameRenderer {
       }
       ctx.closePath();
 
-      if (shape.style === 'pyramid') {
+      const style = shape.style ?? 'landmark';
+
+      if (style === 'xbrace-taper') {
+        // Chicago John Hancock Center — dark steel trapezoid + bold 5-tier diagonal X-bracing!
+        ctx.fillStyle = theme === 'retro' ? '#222222' : shape.accent ?? '#1e242b';
+        ctx.fill();
+        ctx.clip();
+        // Subtle lit office rows
+        for (let y = WORLD_HEIGHT - 310; y < WORLD_HEIGHT - 16; y += 16) {
+          ctx.fillStyle = hash2d(875, y, 2) > 0.3 ? 'rgba(254, 240, 138, 0.45)' : 'rgba(15,23,42,0.4)';
+          ctx.fillRect(110, y, 130, 4);
+        }
+        // Iconic 5-tier X-bracing
+        ctx.strokeStyle = theme === 'retro' ? '#55ffff' : '#94a3b8';
+        ctx.lineWidth = 3.2;
+        const tiers = 5;
+        const topY = WORLD_HEIGHT - 325;
+        const tierH = 325 / tiers;
+        for (let t = 0; t < tiers; t++) {
+          const y1 = topY + t * tierH;
+          const y2 = y1 + tierH;
+          const f1 = t / tiers;
+          const f2 = (t + 1) / tiers;
+          const xl1 = 140 - f1 * 18;
+          const xr1 = 214 + f1 * 18;
+          const xl2 = 140 - f2 * 18;
+          const xr2 = 214 + f2 * 18;
+          ctx.beginPath();
+          ctx.moveTo(xl1, y1);
+          ctx.lineTo(xr2, y2);
+          ctx.moveTo(xr1, y1);
+          ctx.lineTo(xl2, y2);
+          ctx.moveTo(xl1, y1);
+          ctx.lineTo(xr1, y1);
+          ctx.stroke();
+        }
+      } else if (style === 'gold-lattice') {
+        // Atlanta Bank of America Plaza & One Atlantic Center glowing gilded open-lattice spire!
+        ctx.fillStyle = theme === 'retro' ? '#aa7700' : 'rgba(251, 191, 36, 0.36)';
+        ctx.fill();
+        ctx.strokeStyle = theme === 'retro' ? '#ffff55' : shape.accent ?? '#fbbf24';
+        ctx.lineWidth = 2.6;
+        ctx.stroke();
+        ctx.clip();
+        const [p0, apex, p2] = shape.points;
+        for (let k = 1; k <= 5; k++) {
+          const f = k / 6;
+          const ly = p0.y + (apex.y - p0.y) * f;
+          ctx.beginPath();
+          ctx.moveTo(p0.x, ly);
+          ctx.lineTo(p2.x, ly);
+          ctx.stroke();
+        }
+      } else if (style === 'eiffel-lattice') {
+        // Paris Eiffel Tower & Tokyo Tower crisp open truss lattice!
+        ctx.fillStyle = theme === 'retro' ? '#aa5500' : shape.accent ?? '#8c6248';
+        ctx.fill();
+        ctx.clip();
+        let minY = WORLD_HEIGHT,
+          maxY = 0,
+          minX = WORLD_WIDTH,
+          maxX = 0;
+        for (const p of shape.points) {
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+        }
+        ctx.strokeStyle = theme === 'retro' ? '#ffff55' : 'rgba(255,255,255,0.45)';
+        ctx.lineWidth = 2;
+        for (let y = minY; y < maxY; y += 26) {
+          ctx.beginPath();
+          ctx.moveTo(minX, y);
+          ctx.lineTo(maxX, y + 26);
+          ctx.moveTo(maxX, y);
+          ctx.lineTo(minX, y + 26);
+          ctx.stroke();
+        }
+        // Observation deck bands
+        ctx.fillStyle = theme === 'retro' ? '#ffffff' : 'rgba(255, 255, 255, 0.55)';
+        ctx.fillRect(minX, minY + (maxY - minY) * 0.45, maxX - minX, 7);
+        ctx.fillRect(minX, minY + (maxY - minY) * 0.78, maxX - minX, 9);
+      } else if (style === 'diamond-roof' || style === 'shard' || style === 'transamerica') {
+        ctx.fillStyle = theme === 'retro' ? '#cccccc' : shape.accent ?? '#e2e8f0';
+        ctx.fill();
+        ctx.strokeStyle = theme === 'retro' ? '#000000' : 'rgba(30, 41, 59, 0.45)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Reflective center facet highlight
+        if (shape.points.length >= 3) {
+          ctx.fillStyle = 'rgba(255,255,255,0.34)';
+          ctx.beginPath();
+          ctx.moveTo(shape.points[0].x, shape.points[0].y);
+          ctx.lineTo(shape.points[1].x, shape.points[1].y);
+          ctx.lineTo((shape.points[0].x + shape.points[shape.points.length - 1].x) / 2, shape.points[0].y);
+          ctx.closePath();
+          ctx.fill();
+        }
+      } else if (style === 'gherkin') {
+        ctx.fillStyle = theme === 'retro' ? '#00aaaa' : shape.accent ?? '#2c5e63';
+        ctx.fill();
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(186, 230, 253, 0.45)';
+        ctx.lineWidth = 1.8;
+        for (let y = WORLD_HEIGHT - 300; y < WORLD_HEIGHT + 80; y += 22) {
+          ctx.beginPath();
+          ctx.moveTo(295, y);
+          ctx.lineTo(400, y + 60);
+          ctx.moveTo(400, y);
+          ctx.lineTo(295, y + 60);
+          ctx.stroke();
+        }
+      } else if (style === 'pyramid') {
         ctx.fillStyle = theme === 'retro' ? '#cc9933' : shape.accent ?? '#d9a05b';
         ctx.fill();
-        // Right shaded face of pyramid
         if (shape.points.length === 3) {
           ctx.fillStyle = theme === 'retro' ? '#885511' : 'rgba(92, 56, 18, 0.34)';
           ctx.beginPath();
           ctx.moveTo(shape.points[1].x, shape.points[1].y);
           ctx.lineTo(shape.points[2].x, shape.points[2].y);
-          ctx.lineTo(shape.points[1].x + (shape.points[2].x - shape.points[1].x) * 0.35, shape.points[2].y);
+          ctx.lineTo(
+            shape.points[1].x + (shape.points[2].x - shape.points[1].x) * 0.35,
+            shape.points[2].y,
+          );
           ctx.closePath();
           ctx.fill();
         }
-      } else if (shape.style === 'snow-peak') {
+      } else if (style === 'snow-peak') {
         ctx.fillStyle = theme === 'retro' ? '#778899' : '#4b6075';
         ctx.fill();
-        // Crisp snow cap on upper 38%
-        let minY = WORLD_HEIGHT;
-        let maxY = 0;
+        let minY = WORLD_HEIGHT,
+          maxY = 0;
         for (const p of shape.points) {
           if (p.y < minY) minY = p.y;
           if (p.y > maxY) maxY = p.y;
@@ -344,16 +896,16 @@ export class GameRenderer {
         ctx.clip();
         ctx.fillStyle = '#f8fafc';
         ctx.fillRect(0, minY, WORLD_WIDTH, (maxY - minY) * 0.38);
-      } else if (shape.style === 'volcano') {
+      } else if (style === 'volcano') {
         ctx.fillStyle = theme === 'retro' ? '#442222' : '#332626';
         ctx.fill();
         ctx.strokeStyle = theme === 'retro' ? '#ff5555' : '#f97316';
         ctx.lineWidth = 2;
         ctx.stroke();
-      } else if (shape.style === 'sail') {
+      } else if (style === 'sail') {
         ctx.fillStyle = theme === 'retro' ? '#ffffff' : shape.accent ?? '#f8fafc';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(100,116,139,0.4)';
+        ctx.strokeStyle = 'rgba(100,116,139,0.45)';
         ctx.lineWidth = 2;
         ctx.stroke();
       } else {
@@ -379,10 +931,14 @@ export class GameRenderer {
         shape.style === 'gateway-arch'
           ? theme === 'retro'
             ? '#cccccc'
-            : '#d6dee8'
-          : theme === 'retro'
-            ? '#888888'
-            : '#64748b';
+            : '#dbe4ef'
+          : shape.style === 'eiffel-base'
+            ? theme === 'retro'
+              ? '#aa5500'
+              : '#8c6248'
+            : theme === 'retro'
+              ? '#888888'
+              : '#64748b';
       ctx.fill();
       ctx.strokeStyle = theme === 'retro' ? '#000000' : 'rgba(30, 41, 59, 0.45)';
       ctx.lineWidth = 2;
@@ -391,11 +947,62 @@ export class GameRenderer {
     }
   }
 
+  private drawBridgeCables(ctx: CanvasRenderingContext2D, cables: CableSpan[], theme: ThemeMode): void {
+    ctx.save();
+    for (const c of cables) {
+      const mx = (c.x1 + c.x2) / 2;
+      const my = Math.max(c.y1, c.y2) + c.sag;
+      ctx.strokeStyle = theme === 'retro' ? '#ffff55' : c.color;
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(c.x1, c.y1);
+      ctx.quadraticCurveTo(mx, my, c.x2, c.y2);
+      ctx.stroke();
+
+      if (c.suspenderCount && c.deckY !== undefined) {
+        ctx.lineWidth = 1.2;
+        ctx.globalAlpha = 0.7;
+        for (let i = 1; i <= c.suspenderCount; i++) {
+          const t = i / (c.suspenderCount + 1);
+          const u = 1 - t;
+          const sx = u * u * c.x1 + 2 * u * t * mx + t * t * c.x2;
+          const sy = u * u * c.y1 + 2 * u * t * my + t * t * c.y2;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(sx, c.deckY);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+    ctx.restore();
+  }
+
+  private drawSpireBeacons(ctx: CanvasRenderingContext2D, terrain: SkylineTerrain, timeSec: number): void {
+    const pulse = 0.45 + 0.55 * Math.sin(timeSec * 4.5);
+    ctx.save();
+    for (const s of terrain.location.shapes) {
+      if (s.kind === 'rect' && s.style === 'beacon-spire') {
+        const bx = s.x + s.width / 2;
+        const by = s.y;
+        ctx.fillStyle = `rgba(239, 68, 68, ${pulse * 0.45})`;
+        ctx.beginPath();
+        ctx.arc(bx, by, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(254, 202, 202, ${0.5 + pulse * 0.5})`;
+        ctx.beginPath();
+        ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
   render(ctx: CanvasRenderingContext2D, state: RenderState): void {
     ctx.save();
     ctx.translate(state.shakeOffset.x, state.shakeOffset.y);
 
-    // 1. Sky + location backdrop
+    // 1. Sky & atmospheric depth backdrop
     this.drawSky(ctx, state);
 
     // 2. Clouds & wind wisps
@@ -407,49 +1014,148 @@ export class GameRenderer {
     // 4. Wind indicator under sun
     this.drawWindBanner(ctx, state.theme, state.windAccel);
 
-    // 5. Destructible terrain layer
+    // 5. Bridge suspension cables (behind/integrated with terrain)
+    if (state.terrain.location.cables) {
+      this.drawBridgeCables(ctx, state.terrain.location.cables, state.theme);
+    }
+
+    // 6. Destructible terrain layer + blinking aviation beacons
     this.ensureTerrainLayer(state.terrain, state.theme);
     ctx.drawImage(this.terrainCanvas, 0, 0);
+    this.drawSpireBeacons(ctx, state.terrain, state.timeSec);
 
-    // 6. Floating DK Bouncy Tires!
-    this.drawBouncyTires(ctx, state.tires, state.theme, state.timeSec);
+    // 7. Player-Placed Physics Lab Mirror Panels (locked + live draft!)
+    this.drawMirrors(ctx, state.mirrors, state.draftMirror, state.theme, state.timeSec);
 
-    // 7. Ghost trail of active player's previous shot
+    // 8. Ghost trail of active player's previous shot
     const activePlayer = state.players[state.activePlayerIndex];
     if (activePlayer?.lastShot && activePlayer.lastShot.points.length > 1) {
       this.drawGhostTrail(ctx, activePlayer, state.theme);
     }
 
-    // 8. Verified Solution overlay (when toggled On)
+    // 9. Verified Solution overlay (when toggled On)
     if (state.showAimingGuides && state.showSolution && activePlayer && !activePlayer.isBot) {
       this.drawSolutionOverlay(ctx, state);
     }
 
-    // 9. Aiming guides (vector, Vx/Vy, optional aim hint with tire bounce preview!)
+    // 10. Aiming guides (vector, Vx/Vy, optional aim hint with mirror reflection preview!)
     if (state.showAimingGuides && activePlayer && !activePlayer.isBot) {
       this.drawAimingGuides(ctx, activePlayer, state);
     }
 
-    // 10. Gorillas (all 8 custom characters!)
+    // 11. Bigger TV-Readable Gorillas!
     for (let i = 0; i < state.players.length; i++) {
       const p = state.players[i];
       const isActive = i === state.activePlayerIndex;
       this.drawGorilla(ctx, p, isActive, state.theme, state.timeSec);
     }
 
-    // 11. Active flying banana & trail
+    // 12. Active flying banana & trail
     if (state.banana && state.banana.active) {
       this.drawBanana(ctx, state.banana, state.theme);
     }
 
-    // 12. Particles & floating callouts
+    // 13. Particles & floating callouts
     this.drawParticles(ctx, state.particles);
     this.drawFloatingTexts(ctx, state.floatingTexts, state.theme);
 
-    // 13. Postcard Location Badge (bottom-left)
+    // 14. Postcard Location Badge (bottom-left)
     this.drawLocationBadge(ctx, state.terrain, state.theme);
 
     ctx.restore();
+  }
+
+  private drawMirrors(
+    ctx: CanvasRenderingContext2D,
+    mirrors: MirrorPanel[],
+    draftMirror: MirrorPanel | null,
+    theme: ThemeMode,
+    timeSec: number,
+  ): void {
+    const all = draftMirror ? [...mirrors, draftMirror] : mirrors;
+    for (const m of all) {
+      const isDraft = !m.locked;
+      const flash = m.bounceAnim > 0 ? m.bounceAnim / 0.45 : 0;
+
+      ctx.save();
+      ctx.translate(m.x, m.y);
+
+      if (isDraft) {
+        // Subtle drag handle halo + tilt readout
+        const pulse = 1 + Math.sin(timeSec * 6) * 0.05;
+        ctx.strokeStyle = theme === 'retro' ? '#ffff55' : 'rgba(56, 189, 248, 0.85)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.arc(0, 0, (m.halfLength + 12) * pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.rotate(-degToRad(m.angleDeg)); // canvas Y-down
+
+      // Subtle perpendicular normal line (visualizes θ_i = θ_r physics axis!)
+      ctx.strokeStyle = isDraft
+        ? 'rgba(254, 240, 138, 0.75)'
+        : 'rgba(186, 230, 253, 0.42)';
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, -24);
+      ctx.lineTo(0, 24);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Brushed metal housing frame
+      const len = m.halfLength * 2;
+      ctx.fillStyle = theme === 'retro' ? '#555555' : '#1e293b';
+      this.roundRect(ctx, -m.halfLength - 3, -7, len + 6, 14, theme === 'retro' ? 0 : 7);
+      ctx.fill();
+
+      // Glowing mirror glass face (double-sided reflective!)
+      const grad = ctx.createLinearGradient(-m.halfLength, -5, m.halfLength, 5);
+      if (flash > 0.1) {
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.5, '#a5f3fc');
+        grad.addColorStop(1, '#ffffff');
+      } else if (theme === 'retro') {
+        grad.addColorStop(0, '#55ffff');
+        grad.addColorStop(0.5, '#ffffff');
+        grad.addColorStop(1, '#55ffff');
+      } else {
+        grad.addColorStop(0, '#38bdf8');
+        grad.addColorStop(0.35, '#e0f2fe');
+        grad.addColorStop(0.65, '#7dd3fc');
+        grad.addColorStop(1, '#0ea5e9');
+      }
+      ctx.fillStyle = grad;
+      this.roundRect(ctx, -m.halfLength, -4.5, len, 9, theme === 'retro' ? 0 : 4);
+      ctx.fill();
+
+      // Endcap owner color dots
+      ctx.fillStyle = m.ownerColor;
+      ctx.beginPath();
+      ctx.arc(-m.halfLength, 0, 4.5, 0, Math.PI * 2);
+      ctx.arc(m.halfLength, 0, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+
+      if (isDraft) {
+        ctx.save();
+        ctx.font = theme === 'retro' ? 'bold 11px "Courier New", monospace' : '700 11px system-ui, sans-serif';
+        const txt = `MIRROR ${m.angleDeg >= 0 ? '+' : ''}${m.angleDeg}° · DRAG TO PLACE`;
+        const w = ctx.measureText(txt).width + 16;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        this.roundRect(ctx, m.x - w / 2, m.y - 44, w, 20, theme === 'retro' ? 0 : 10);
+        ctx.fill();
+        ctx.fillStyle = '#bae6fd';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(txt, m.x, m.y - 34);
+        ctx.restore();
+      }
+    }
   }
 
   private drawSky(ctx: CanvasRenderingContext2D, state: RenderState): void {
@@ -511,9 +1217,9 @@ export class GameRenderer {
       grad.addColorStop(0.55, '#38a3a5');
       grad.addColorStop(1, '#c7f9cc');
     } else if (mood === 'twilight') {
-      grad.addColorStop(0, '#102a43');
-      grad.addColorStop(0.5, '#335c81');
-      grad.addColorStop(0.82, '#c97b63');
+      grad.addColorStop(0, '#0f253d');
+      grad.addColorStop(0.48, '#2d5378');
+      grad.addColorStop(0.8, '#c97b63');
       grad.addColorStop(1, '#f0b878');
     } else {
       grad.addColorStop(0, '#18446c');
@@ -525,37 +1231,46 @@ export class GameRenderer {
     ctx.fillStyle = grad;
     ctx.fillRect(-20, -20, WORLD_WIDTH + 40, WORLD_HEIGHT + 40);
 
-    // Twinkling stars
+    // Stars
     if (planetId === 'moon' || planetId === 'earth') {
-      const starCount = planetId === 'moon' ? 75 : 18;
-      const maxY = planetId === 'moon' ? WORLD_HEIGHT * 0.72 : WORLD_HEIGHT * 0.3;
+      const starCount = planetId === 'moon' ? 75 : 22;
+      const maxY = planetId === 'moon' ? WORLD_HEIGHT * 0.72 : WORLD_HEIGHT * 0.32;
       for (let i = 0; i < starCount; i++) {
         const sx = hash2d(99, i, 1) * WORLD_WIDTH;
         const sy = hash2d(99, i, 2) * maxY;
         const twinkle = 0.45 + 0.55 * Math.sin(timeSec * 2.2 + i * 1.7);
-        ctx.fillStyle = `rgba(255, 252, 235, ${twinkle * (planetId === 'moon' ? 0.9 : 0.4)})`;
+        ctx.fillStyle = `rgba(255, 252, 235, ${twinkle * (planetId === 'moon' ? 0.9 : 0.42)})`;
         ctx.beginPath();
         ctx.arc(sx, sy, 1.3, 0, Math.PI * 2);
         ctx.fill();
       }
     }
 
-    // Location signature scenic backdrop (purely atmospheric behind terrain)
+    // Distant mid-ground city silhouette layer for rich atmospheric depth!
     const bd = terrain.location.backdrop;
+    if (bd === 'city-depth' || bd === 'lake-michigan' || bd === 'bay-water') {
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.22)';
+      for (let i = 0; i < 24; i++) {
+        const bx = i * 52 - 8;
+        const bh = 120 + hash2d(313 + terrain.location.id.length, i, 2) * 165;
+        ctx.fillRect(bx, WORLD_HEIGHT - bh, 46, bh);
+      }
+    }
+
     if (bd === 'mt-fuji' || bd === 'mt-rainier') {
       ctx.save();
-      ctx.fillStyle = 'rgba(30, 58, 95, 0.32)';
+      ctx.fillStyle = 'rgba(30, 58, 95, 0.34)';
       ctx.beginPath();
-      ctx.moveTo(260, WORLD_HEIGHT);
-      ctx.lineTo(600, 230);
-      ctx.lineTo(940, WORLD_HEIGHT);
+      ctx.moveTo(240, WORLD_HEIGHT);
+      ctx.lineTo(600, 220);
+      ctx.lineTo(960, WORLD_HEIGHT);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.52)';
       ctx.beginPath();
-      ctx.moveTo(520, 335);
-      ctx.lineTo(600, 230);
-      ctx.lineTo(680, 335);
+      ctx.moveTo(516, 330);
+      ctx.lineTo(600, 220);
+      ctx.lineTo(684, 330);
       ctx.closePath();
       ctx.fill();
       ctx.restore();
@@ -566,14 +1281,14 @@ export class GameRenderer {
       ctx.fillStyle = lava;
       ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     } else if (bd === 'alpine-peaks') {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
       ctx.beginPath();
       ctx.moveTo(0, WORLD_HEIGHT);
-      ctx.lineTo(190, 280);
+      ctx.lineTo(190, 275);
       ctx.lineTo(390, WORLD_HEIGHT);
-      ctx.lineTo(610, 240);
+      ctx.lineTo(610, 235);
       ctx.lineTo(860, WORLD_HEIGHT);
-      ctx.lineTo(1060, 290);
+      ctx.lineTo(1060, 285);
       ctx.lineTo(WORLD_WIDTH, WORLD_HEIGHT);
       ctx.fill();
     }
@@ -617,75 +1332,6 @@ export class GameRenderer {
         ctx.lineTo(w.x + w.length * dir, w.y);
         ctx.stroke();
       }
-      ctx.restore();
-    }
-  }
-
-  private drawBouncyTires(
-    ctx: CanvasRenderingContext2D,
-    tires: BouncyTire[],
-    theme: ThemeMode,
-    timeSec: number,
-  ): void {
-    for (const tire of tires) {
-      const bob = Math.sin(timeSec * 2.4 + tire.phaseOffset) * 3;
-      const squash = tire.bounceAnim > 0 ? 1 + Math.sin(tire.bounceAnim * 26) * 0.18 : 1;
-
-      ctx.save();
-      ctx.translate(tire.x, tire.y + bob);
-
-      // Suspension string & balloon holding the DK Tire aloft
-      ctx.strokeStyle = theme === 'retro' ? '#ffffff' : 'rgba(255,255,255,0.75)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(0, -tire.radius);
-      ctx.lineTo(0, -tire.radius - 24);
-      ctx.stroke();
-
-      ctx.fillStyle = tire.balloonColor;
-      ctx.beginPath();
-      ctx.ellipse(0, -tire.radius - 36, 12, 15, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.beginPath();
-      ctx.ellipse(-4, -tire.radius - 40, 3.5, 5, -0.3, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Tire body with bounce scale
-      ctx.scale(squash, 2 - squash);
-
-      // Outer rubber tread
-      ctx.fillStyle = theme === 'retro' ? '#222222' : '#1f2937';
-      ctx.beginPath();
-      ctx.arc(0, 0, tire.radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Tread notches around rim
-      ctx.strokeStyle = theme === 'retro' ? '#55ffff' : '#fbbf24';
-      ctx.lineWidth = 2.6;
-      ctx.setLineDash([6, 5]);
-      ctx.beginPath();
-      ctx.arc(0, 0, tire.radius - 2, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Inner sidewall ring
-      ctx.fillStyle = theme === 'retro' ? '#555555' : '#374151';
-      ctx.beginPath();
-      ctx.arc(0, 0, tire.radius * 0.66, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Classic DK yellow hub center
-      ctx.fillStyle = '#fde047';
-      ctx.beginPath();
-      ctx.arc(0, 0, tire.radius * 0.36, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#92400e';
-      ctx.font = '900 10px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('DK', 0, 0.5);
-
       ctx.restore();
     }
   }
@@ -853,7 +1499,7 @@ export class GameRenderer {
     const w = ctx.measureText(text).width + 20;
     const x = 14;
     const y = WORLD_HEIGHT - 36;
-    ctx.fillStyle = theme === 'retro' ? '#000055' : 'rgba(15, 23, 42, 0.72)';
+    ctx.fillStyle = theme === 'retro' ? '#000055' : 'rgba(15, 23, 42, 0.76)';
     this.roundRect(ctx, x, y, w, 24, theme === 'retro' ? 0 : 12);
     ctx.fill();
     if (theme === 'retro') {
@@ -914,7 +1560,7 @@ export class GameRenderer {
     ctx.save();
 
     if (!sol || sol.points.length < 2) {
-      const msg = 'No direct arc from this spot — step left/right or blast a tunnel!';
+      const msg = 'No direct arc here — walk left/right or place an angled Mirror!';
       ctx.font = theme === 'retro' ? 'bold 12px "Courier New", monospace' : '700 12px system-ui, sans-serif';
       const w = ctx.measureText(msg).width + 20;
       ctx.fillStyle = theme === 'retro' ? '#550000' : 'rgba(127, 29, 29, 0.85)';
@@ -945,7 +1591,7 @@ export class GameRenderer {
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(last.x, last.y, 18 * pulse, 0, Math.PI * 2);
+    ctx.arc(last.x, last.y, 22 * pulse, 0, Math.PI * 2);
     ctx.stroke();
 
     let labelPt = sol.points[Math.floor(sol.points.length / 2)];
@@ -955,7 +1601,7 @@ export class GameRenderer {
       }
     }
     const dirLabel = sol.direction > 0 ? 'Right →' : '← Left';
-    const bankTag = sol.bounces > 0 ? ' [Bank!]' : '';
+    const bankTag = sol.bounces > 0 ? ' [Mirror Bank!]' : '';
     const text = `Solution: ${sol.angleDeg}° · ${sol.speed} m/s (${dirLabel})${bankTag}`;
     ctx.font = theme === 'retro' ? 'bold 12px "Courier New", monospace' : '700 12px system-ui, sans-serif';
     const w = ctx.measureText(text).width + 20;
@@ -982,13 +1628,15 @@ export class GameRenderer {
     state: RenderState,
   ): void {
     const origin = { x: player.x, y: player.y - GORILLA_HAND_OFFSET_Y };
-    const { aimAngle, aimSpeed, aimDirection, gravity, windAccel, theme, tires, terrain } = state;
+    const { aimAngle, aimSpeed, aimDirection, gravity, windAccel, theme, mirrors, draftMirror, terrain } = state;
     const { vx, vy } = computeVelocityComponents(aimAngle, aimSpeed, aimDirection);
+    const activeMirrors = draftMirror ? [...mirrors, draftMirror] : mirrors;
 
     ctx.save();
 
-    if (state.showAimHint) {
-      const hintDuration = gravity < 3 ? 1.55 : gravity < 6 ? 1.15 : 0.9;
+    // Show longer Aim Hint (or preview bounce when actively positioning a draft mirror!)
+    if (state.showAimHint || draftMirror) {
+      const hintDuration = draftMirror ? 2.2 : gravity < 3 ? 1.55 : gravity < 6 ? 1.15 : 0.95;
       const pts = sampleTrajectory(
         origin,
         aimAngle,
@@ -998,15 +1646,16 @@ export class GameRenderer {
         windAccel,
         hintDuration,
         0.045,
-        tires,
+        activeMirrors,
         (x, y) => terrain.isSolid(x, y),
       );
       for (let i = 1; i < pts.length; i++) {
         const tFrac = 1 - i / pts.length;
-        ctx.fillStyle =
-          theme === 'retro'
+        ctx.fillStyle = draftMirror
+          ? `rgba(125, 211, 252, ${0.25 + tFrac * 0.72})`
+          : theme === 'retro'
             ? `rgba(255, 255, 85, ${0.25 + tFrac * 0.7})`
-            : `rgba(254, 240, 138, ${0.2 + tFrac * 0.75})`;
+            : `rgba(254, 240, 138, ${0.22 + tFrac * 0.75})`;
         ctx.beginPath();
         ctx.arc(pts[i].x, pts[i].y, theme === 'retro' ? 2.5 : 3.2 * (0.6 + tFrac * 0.5), 0, Math.PI * 2);
         ctx.fill();
@@ -1071,44 +1720,43 @@ export class GameRenderer {
   ): void {
     const bounce =
       p.animation === 'celebrate'
-        ? Math.abs(Math.sin(timeSec * 12)) * 9
+        ? Math.abs(Math.sin(timeSec * 12)) * 12
         : isActive
-          ? Math.sin(timeSec * 4) * 1.5
+          ? Math.sin(timeSec * 4) * 1.8
           : 0;
 
     ctx.save();
     ctx.translate(p.x, p.y - bounce);
 
-    const armsUp = p.animation === 'celebrate' || p.animation === 'throwing';
-    if (theme === 'retro') {
-      this.drawRetroGorilla(ctx, p, armsUp, timeSec);
-    } else {
-      this.drawModernGorilla(ctx, p, armsUp, timeSec);
-    }
+    // Draw scaled-up TV-readable gorilla character!
+    ctx.save();
+    ctx.scale(GORILLA_SCALE, GORILLA_SCALE);
+    drawGorillaCharacter(ctx, p.characterId, p.animation, theme, timeSec);
+    ctx.restore();
 
-    const labelY = -62;
+    const labelY = -90;
     if (isActive) {
-      const bob = Math.sin(timeSec * 6) * 3;
+      const bob = Math.sin(timeSec * 6) * 3.5;
       ctx.fillStyle = theme === 'retro' ? '#ffff55' : '#fde047';
       ctx.beginPath();
-      ctx.moveTo(0, labelY - 12 + bob);
-      ctx.lineTo(-7, labelY - 22 + bob);
-      ctx.lineTo(7, labelY - 22 + bob);
+      ctx.moveTo(0, labelY - 13 + bob);
+      ctx.lineTo(-8, labelY - 25 + bob);
+      ctx.lineTo(8, labelY - 25 + bob);
       ctx.closePath();
       ctx.fill();
     }
 
-    ctx.font = theme === 'retro' ? 'bold 12px "Courier New", monospace' : '700 12px system-ui, sans-serif';
+    ctx.font = theme === 'retro' ? 'bold 13px "Courier New", monospace' : '800 13px system-ui, sans-serif';
     const tag = `${p.name} · ${p.score}`;
-    const tagW = ctx.measureText(tag).width + 14;
-    ctx.fillStyle = isActive ? p.color : 'rgba(15, 23, 42, 0.78)';
-    this.roundRect(ctx, -tagW / 2, labelY - 9, tagW, 20, theme === 'retro' ? 0 : 10);
+    const tagW = ctx.measureText(tag).width + 16;
+    ctx.fillStyle = isActive ? p.color : 'rgba(15, 23, 42, 0.84)';
+    this.roundRect(ctx, -tagW / 2, labelY - 10, tagW, 22, theme === 'retro' ? 0 : 11);
     ctx.fill();
 
     if (isActive && theme === 'retro') {
       ctx.strokeStyle = '#ffff55';
       ctx.lineWidth = 2;
-      ctx.strokeRect(-tagW / 2, labelY - 9, tagW, 20);
+      ctx.strokeRect(-tagW / 2, labelY - 10, tagW, 22);
     }
 
     ctx.fillStyle = '#ffffff';
@@ -1118,316 +1766,12 @@ export class GameRenderer {
     ctx.restore();
   }
 
-  private drawRetroGorilla(
-    ctx: CanvasRenderingContext2D,
-    p: Player,
-    armsUp: boolean,
-    timeSec: number,
-  ): void {
-    const ch = CHARACTERS[p.characterId];
-    const fur = p.characterId === 'robo-kong' ? '#888888' : '#cc7a33';
-    const chest = p.characterId === 'astro-ape' ? '#ffffff' : p.characterId === 'robo-kong' ? '#cccccc' : '#e6a15c';
-
-    ctx.fillStyle = fur;
-    ctx.fillRect(-13, -12, 10, 12);
-    ctx.fillRect(3, -12, 10, 12);
-    ctx.fillRect(-15, -30, 30, 20);
-    ctx.fillStyle = chest;
-    ctx.fillRect(-9, -27, 18, 13);
-    ctx.fillStyle = fur;
-    ctx.fillRect(-9, -41, 18, 12);
-
-    // Character-specific pixel headgear
-    if (p.characterId === 'king-kong') {
-      ctx.fillStyle = '#ffff55';
-      ctx.fillRect(-9, -47, 18, 6);
-      ctx.fillRect(-9, -50, 4, 3);
-      ctx.fillRect(-2, -51, 4, 4);
-      ctx.fillRect(5, -50, 4, 3);
-    } else if (p.characterId === 'astro-ape') {
-      ctx.strokeStyle = '#55ffff';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(-12, -45, 24, 17);
-    } else if (p.characterId === 'chef-nana') {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(-10, -52, 20, 11);
-    } else if (p.characterId === 'dj-kong') {
-      ctx.fillStyle = '#55ffff';
-      ctx.fillRect(-12, -41, 4, 9);
-      ctx.fillRect(8, -41, 4, 9);
-      ctx.fillRect(-10, -45, 20, 4);
-    } else {
-      ctx.fillStyle = ch.color;
-      ctx.fillRect(-10, -44, 20, 5);
-    }
-
-    ctx.fillStyle = p.characterId === 'robo-kong' ? '#55ffff' : '#000000';
-    ctx.fillRect(-6, -37, 4, 3);
-    ctx.fillRect(2, -37, 4, 3);
-
-    ctx.fillStyle = fur;
-    const alt = p.animation === 'celebrate' && Math.floor(timeSec * 8) % 2 === 0;
-    if (armsUp) {
-      ctx.fillRect(-22, alt ? -42 : -38, 8, 16);
-      ctx.fillRect(14, alt ? -38 : -42, 8, 16);
-    } else {
-      ctx.fillRect(-22, -28, 7, 16);
-      ctx.fillRect(15, -28, 7, 16);
-    }
-  }
-
-  private drawModernGorilla(
-    ctx: CanvasRenderingContext2D,
-    p: Player,
-    armsUp: boolean,
-    timeSec: number,
-  ): void {
-    const ch = CHARACTERS[p.characterId];
-    const fur = ch.furColor;
-    const chest = ch.chestColor;
-    const skin = p.characterId === 'robo-kong' ? '#cbd5e1' : '#c89b7b';
-
-    // Ground shadow
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 18, 4.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Arms
-    ctx.strokeStyle = fur;
-    ctx.lineWidth = 8;
-    ctx.lineCap = 'round';
-    const wave = p.animation === 'celebrate' ? Math.sin(timeSec * 14) * 5 : 0;
-    ctx.beginPath();
-    if (armsUp) {
-      ctx.moveTo(-13, -24);
-      ctx.quadraticCurveTo(-24, -32, -19, -42 + wave);
-      ctx.moveTo(13, -24);
-      ctx.quadraticCurveTo(24, -32, 19, -42 - wave);
-    } else {
-      ctx.moveTo(-13, -24);
-      ctx.quadraticCurveTo(-22, -16, -18, -8);
-      ctx.moveTo(13, -24);
-      ctx.quadraticCurveTo(22, -16, 18, -8);
-    }
-    ctx.stroke();
-
-    // Wristbands
-    ctx.strokeStyle = ch.color;
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    if (armsUp) {
-      ctx.moveTo(-21, -37 + wave);
-      ctx.lineTo(-17, -37 + wave);
-      ctx.moveTo(17, -37 - wave);
-      ctx.lineTo(21, -37 - wave);
-    } else {
-      ctx.moveTo(-20, -11);
-      ctx.lineTo(-16, -11);
-      ctx.moveTo(16, -11);
-      ctx.lineTo(20, -11);
-    }
-    ctx.stroke();
-
-    // Legs & torso
-    ctx.fillStyle = fur;
-    ctx.beginPath();
-    ctx.roundRect(-12, -12, 9, 12, 4);
-    ctx.roundRect(3, -12, 9, 12, 4);
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.ellipse(0, -21, 16, 14, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = chest;
-    ctx.beginPath();
-    ctx.ellipse(0, -20, 10, 8.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Head & face
-    ctx.fillStyle = fur;
-    ctx.beginPath();
-    ctx.arc(0, -35, 11, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = skin;
-    ctx.beginPath();
-    ctx.ellipse(0, -33, 7.5, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Eyes / visor
-    if (p.characterId === 'robo-kong') {
-      ctx.fillStyle = '#06b6d4';
-      ctx.fillRect(-7, -37, 14, 4.5);
-      ctx.fillStyle = '#ecfeff';
-      ctx.fillRect(-5, -36, 5, 2);
-    } else if (p.animation === 'ouch') {
-      ctx.strokeStyle = '#1f1a18';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(-5, -36);
-      ctx.lineTo(-1, -32);
-      ctx.moveTo(-1, -36);
-      ctx.lineTo(-5, -32);
-      ctx.moveTo(1, -36);
-      ctx.lineTo(5, -32);
-      ctx.moveTo(5, -36);
-      ctx.lineTo(1, -32);
-      ctx.stroke();
-    } else {
-      ctx.fillStyle = '#1f1a18';
-      ctx.beginPath();
-      ctx.arc(-3.5, -34.5, 1.8, 0, Math.PI * 2);
-      ctx.arc(3.5, -34.5, 1.8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#1f1a18';
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.arc(0, -31.5, 3.5, 0.1 * Math.PI, 0.9 * Math.PI);
-      ctx.stroke();
-    }
-
-    // 8 Distinct Character Accessories!
-    switch (p.characterId) {
-      case 'king-kong': {
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.moveTo(-9, -43);
-        ctx.lineTo(-9, -52);
-        ctx.lineTo(-3, -47);
-        ctx.lineTo(0, -54);
-        ctx.lineTo(3, -47);
-        ctx.lineTo(9, -52);
-        ctx.lineTo(9, -43);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = '#dc2626';
-        ctx.fillRect(-10, -44, 20, 3.5);
-        break;
-      }
-      case 'astro-ape': {
-        ctx.strokeStyle = '#93c5fd';
-        ctx.fillStyle = 'rgba(147, 197, 253, 0.24)';
-        ctx.lineWidth = 2.2;
-        ctx.beginPath();
-        ctx.arc(0, -35, 15, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        // Helmet gleam
-        ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-        ctx.beginPath();
-        ctx.arc(0, -35, 12, -2.5, -1.7);
-        ctx.stroke();
-        break;
-      }
-      case 'prof-peel': {
-        // Round physics spectacles + bowtie
-        ctx.strokeStyle = '#f8fafc';
-        ctx.lineWidth = 1.8;
-        ctx.beginPath();
-        ctx.arc(-3.8, -34.5, 3.5, 0, Math.PI * 2);
-        ctx.arc(3.8, -34.5, 3.5, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath();
-        ctx.moveTo(-5, -26);
-        ctx.lineTo(0, -24);
-        ctx.lineTo(-5, -22);
-        ctx.moveTo(5, -26);
-        ctx.lineTo(0, -24);
-        ctx.lineTo(5, -22);
-        ctx.fill();
-        // Wild Einstein hair tufts
-        ctx.fillStyle = '#e2e8f0';
-        ctx.beginPath();
-        ctx.arc(-9, -42, 4, 0, Math.PI * 2);
-        ctx.arc(9, -42, 4, 0, Math.PI * 2);
-        ctx.arc(0, -46, 4.5, 0, Math.PI * 2);
-        ctx.fill();
-        break;
-      }
-      case 'capt-bongo': {
-        // Pirate hat + eyepatch
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.moveTo(-14, -42);
-        ctx.quadraticCurveTo(0, -56, 14, -42);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 1.8;
-        ctx.stroke();
-        // Eyepatch
-        ctx.fillStyle = '#0f172a';
-        ctx.beginPath();
-        ctx.arc(3.5, -34.5, 3.2, 0, Math.PI * 2);
-        ctx.fill();
-        break;
-      }
-      case 'dj-kong': {
-        // Cool shades + oversized headphones
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(-8, -37, 16, 4.5);
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(0, -35, 13, Math.PI, 0);
-        ctx.stroke();
-        ctx.fillStyle = '#0ea5e9';
-        ctx.fillRect(-15, -39, 5, 9);
-        ctx.fillRect(10, -39, 5, 9);
-        break;
-      }
-      case 'chef-nana': {
-        // Puffy white chef toque + red neckerchief
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(-9, -49, 18, 8);
-        ctx.beginPath();
-        ctx.arc(-6, -50, 5.5, 0, Math.PI * 2);
-        ctx.arc(0, -53, 6.5, 0, Math.PI * 2);
-        ctx.arc(6, -50, 5.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#ea580c';
-        ctx.fillRect(-7, -26, 14, 3.5);
-        break;
-      }
-      case 'ninja-chimp': {
-        // Stealth headband with fluttering scarf tail
-        ctx.fillStyle = '#f43f5e';
-        ctx.fillRect(-11, -43, 22, 4.5);
-        const flutter = Math.sin(timeSec * 8) * 3;
-        ctx.beginPath();
-        ctx.moveTo(10, -41);
-        ctx.lineTo(20, -43 + flutter);
-        ctx.lineTo(18, -37 + flutter);
-        ctx.closePath();
-        ctx.fill();
-        break;
-      }
-      case 'robo-kong': {
-        // Antenna with blinking LED
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(0, -45);
-        ctx.lineTo(0, -54);
-        ctx.stroke();
-        ctx.fillStyle = Math.sin(timeSec * 8) > 0 ? '#22d3ee' : '#f43f5e';
-        ctx.beginPath();
-        ctx.arc(0, -55, 3, 0, Math.PI * 2);
-        ctx.fill();
-        break;
-      }
-    }
-  }
-
   private drawBanana(ctx: CanvasRenderingContext2D, banana: Banana, theme: ThemeMode): void {
     if (banana.trail.length > 1) {
       ctx.save();
       ctx.strokeStyle =
         banana.bounces > 0
-          ? '#6ee7b7'
+          ? '#7dd3fc'
           : theme === 'retro'
             ? '#ffff55'
             : 'rgba(254, 240, 138, 0.85)';
