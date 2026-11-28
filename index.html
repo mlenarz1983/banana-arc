@@ -6,10 +6,10 @@
     <title>Banana Arc — Gorilla Projectile Physics</title>
     <meta
       name="description"
-      content="A 1–4 player tribute to QBasic Gorillas with 15 iconic world locations, 8 gorilla characters, DK bouncy tires, and Jackbox-style TV + Tablet controller mode."
+      content="A 1–4 player tribute to QBasic Gorillas with 15 iconic world locations (Chicago, Atlanta, NYC, and more), 8 illustrated gorilla characters, player-placed Physics Lab Mirror Panels, and Jackbox-style TV + Tablet mode."
     />
-    <script type="module" crossorigin src="./assets/index-G5EdQf45.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DVpN6Fdm.css">
+    <script type="module" crossorigin src="./assets/index-CswhGCA0.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-JLxI2OuG.css">
   </head>
   <body>
     <!-- Main Stage View (Single-Screen & TV Host Mode) -->
@@ -77,7 +77,37 @@
           <div id="toast-banner" class="toast-banner hidden" aria-live="polite"></div>
         </div>
 
-        <!-- Touch-First Controls Dock (zero Chrome long-press menu!) -->
+        <!-- Mirror Placement Drawer (appears when player clicks + Place Mirror) -->
+        <section id="mirror-bar" class="mirror-bar hidden no-touch-menu" aria-label="Mirror placement controls">
+          <div class="mirror-bar-info">
+            <strong>Physics Lab Mirror</strong>
+            <span>Drag the glowing mirror anywhere in the sky, then tilt it to bounce your shot (θ_in = θ_out)!</span>
+          </div>
+          <div class="mirror-tilt-group">
+            <div class="slider-header">
+              <span class="control-label">Mirror Tilt</span>
+              <div class="stepper-row">
+                <button class="step-btn" type="button" data-mirror-tilt="-15">-15°</button>
+                <button class="step-btn" type="button" data-mirror-tilt="-5">-5°</button>
+                <strong id="mirror-tilt-val" class="val-pill">-25°</strong>
+                <button class="step-btn" type="button" data-mirror-tilt="5">+5°</button>
+                <button class="step-btn" type="button" data-mirror-tilt="15">+15°</button>
+              </div>
+            </div>
+            <div id="slider-mirror-tilt" class="touch-slider" role="slider" aria-label="Mirror tilt angle" aria-valuemin="-80" aria-valuemax="80" aria-valuenow="-25">
+              <div class="touch-slider-track">
+                <div id="slider-mirror-tilt-fill" class="touch-slider-fill"></div>
+                <div id="slider-mirror-tilt-thumb" class="touch-slider-thumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="mirror-bar-actions">
+            <button id="btn-mirror-lock" class="primary-btn" type="button">Lock Mirror</button>
+            <button id="btn-mirror-cancel" class="secondary-btn" type="button">Cancel</button>
+          </div>
+        </section>
+
+        <!-- Touch-First Controls Dock -->
         <section id="controls-dock" class="controls-dock no-touch-menu" aria-label="Throw and movement controls">
           <div class="dock-side-group">
             <div class="control-group">
@@ -94,6 +124,13 @@
                 <button id="btn-dir-left" class="dir-btn" type="button">← Left</button>
                 <button id="btn-dir-right" class="dir-btn active" type="button">Right →</button>
               </div>
+            </div>
+
+            <div class="control-group">
+              <span id="mirror-count-label" class="control-label">Mirror (0/4)</span>
+              <button id="btn-place-mirror" class="mirror-trigger-btn" type="button" title="Place an angled Physics Lab Mirror in the sky">
+                + Mirror
+              </button>
             </div>
           </div>
 
@@ -168,7 +205,7 @@
             </div>
           </div>
           <p id="lab-tip" class="lab-tip">
-            Tip: Aim down to -30° from tall towers, bounce bananas off floating DK Tires for +20 Bank Shots, or cast to TV and pass a tablet around!
+            Tip: Tap "+ Mirror" on your turn to place &amp; tilt a flat Physics Lab Mirror in the sky—mirrors stay all round for multi-bounce chain reactions!
           </p>
         </section>
       </main>
@@ -178,7 +215,7 @@
     <div id="controller-view" class="controller-shell hidden no-touch-menu">
       <header class="ctrl-header">
         <div class="ctrl-player-banner">
-          <span id="ctrl-player-swatch" class="ctrl-swatch"></span>
+          <canvas id="ctrl-avatar-canvas" class="ctrl-avatar-canvas" width="54" height="54"></canvas>
           <div>
             <div id="ctrl-turn-heading" class="ctrl-player-name">Connecting to TV...</div>
             <div id="ctrl-meta-line" class="ctrl-meta">Enter a room code to start</div>
@@ -194,6 +231,51 @@
           <span id="ctrl-location-chip" class="status-chip">Location</span>
           <span id="ctrl-wind-chip" class="status-chip">Wind 0.0</span>
           <span id="ctrl-tries-chip" class="status-chip status-chip--planet">Try 1 / 3</span>
+        </div>
+
+        <!-- Mirror Placement Card on Tablet Controller (toggled via + Mirror) -->
+        <div id="ctrl-mirror-card" class="ctrl-card ctrl-card--mirror hidden">
+          <div class="slider-header">
+            <span class="control-label">Position Mirror Live on TV</span>
+            <strong id="ctrl-mirror-readout" class="val-pill">-25°</strong>
+          </div>
+          <div class="control-group">
+            <span class="control-label">Left ↔ Right (X)</span>
+            <div id="ctrl-slider-mx" class="touch-slider touch-slider--lg" role="slider" aria-label="Mirror X position">
+              <div class="touch-slider-track">
+                <div id="ctrl-slider-mx-fill" class="touch-slider-fill"></div>
+                <div id="ctrl-slider-mx-thumb" class="touch-slider-thumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="control-group">
+            <span class="control-label">High ↕ Low (Y)</span>
+            <div id="ctrl-slider-my" class="touch-slider touch-slider--lg" role="slider" aria-label="Mirror Y position">
+              <div class="touch-slider-track">
+                <div id="ctrl-slider-my-fill" class="touch-slider-fill"></div>
+                <div id="ctrl-slider-my-thumb" class="touch-slider-thumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="control-group">
+            <span class="control-label">Tilt Angle (-80° to +80°)</span>
+            <div id="ctrl-slider-mtilt" class="touch-slider touch-slider--lg" role="slider" aria-label="Mirror tilt">
+              <div class="touch-slider-track">
+                <div id="ctrl-slider-mtilt-fill" class="touch-slider-fill"></div>
+                <div id="ctrl-slider-mtilt-thumb" class="touch-slider-thumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="ctrl-steppers">
+            <button class="ctrl-step-btn" type="button" data-ctrl-mtilt="-15">-15°</button>
+            <button class="ctrl-step-btn" type="button" data-ctrl-mtilt="-5">-5°</button>
+            <button class="ctrl-step-btn" type="button" data-ctrl-mtilt="5">+5°</button>
+            <button class="ctrl-step-btn" type="button" data-ctrl-mtilt="15">+15°</button>
+          </div>
+          <div class="ctrl-btn-pair">
+            <button id="ctrl-mirror-lock" class="primary-btn" type="button">Lock Mirror</button>
+            <button id="ctrl-mirror-cancel" class="secondary-btn" type="button">Cancel</button>
+          </div>
         </div>
 
         <div class="ctrl-row-two">
@@ -260,6 +342,7 @@
         </button>
 
         <div class="ctrl-quick-toggles">
+          <button id="ctrl-btn-mirror" class="tool-btn tool-btn--tv" type="button">+ Place Mirror</button>
           <button id="ctrl-toggle-hint" class="tool-btn" type="button">Aim Hint: Off</button>
           <button id="ctrl-toggle-solution" class="tool-btn" type="button">Solution: Off</button>
           <button id="ctrl-toggle-theme" class="tool-btn" type="button">Theme: Modern</button>
@@ -269,13 +352,13 @@
       </section>
     </div>
 
-    <!-- Setup Overlay -->
+    <!-- Setup Overlay with Visual Gorilla Portrait Picker! -->
     <div id="setup-modal" class="modal-backdrop">
       <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="setup-title">
         <div class="modal-header">
           <h2 id="setup-title">New Banana Arc Match</h2>
           <p class="modal-subtitle">
-            15 iconic cities &amp; wild terrains, 8 gorilla characters, floating DK Bouncy Tires, and Jackbox-style TV + Tablet mode!
+            15 iconic cities &amp; terrains (Chicago, Atlanta, NYC &amp; more), illustrated gorilla characters, player-placed Physics Lab Mirrors, and Jackbox TV + Tablet mode!
           </p>
         </div>
 
@@ -319,14 +402,20 @@
             </div>
           </div>
 
+          <!-- Visual Player Slots + 8-Gorilla Avatar Gallery -->
           <div class="setup-field">
-            <label class="field-label">Players &amp; Gorilla Characters (tap character pill to switch)</label>
+            <label class="field-label">1. Select a Player Slot &amp; Edit Name</label>
             <div id="setup-names" class="names-grid"></div>
+          </div>
+
+          <div class="setup-field">
+            <label id="avatar-gallery-label" class="field-label">2. Pick Gorilla Avatar for Player 1</label>
+            <div id="setup-avatar-gallery" class="avatar-gallery"></div>
           </div>
 
           <div class="setup-row-split">
             <div class="setup-field">
-              <label for="setup-location-select" class="field-label">Location / Terrain</label>
+              <label for="setup-location-select" class="field-label">Location / Skyline</label>
               <select id="setup-location-select" class="select-input"></select>
             </div>
 
@@ -338,8 +427,8 @@
 
           <div class="setup-field setup-toggles">
             <label class="check-label">
-              <input id="setup-tires-check" type="checkbox" checked />
-              <span>Floating DK Bouncy Tires (elastic mid-air bank shots, +20 bonus)</span>
+              <input id="setup-mirrors-check" type="checkbox" checked />
+              <span>Player-Placed Physics Lab Mirrors (1 per turn, shared all round up to 4)</span>
             </label>
             <label class="check-label">
               <input id="setup-hint-check" type="checkbox" />
@@ -386,7 +475,7 @@
 
           <div class="jackbox-box">
             <h3>2. On the Tablet or Phone</h3>
-            <p>Opens a big-button touchscreen controller (no tiny sliders, no Chrome menus).</p>
+            <p>Opens a big-button touchscreen controller (including live Mirror placement on the TV!).</p>
             <div class="jackbox-join-row">
               <input
                 id="input-room-code"
