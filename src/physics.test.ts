@@ -189,14 +189,22 @@ describe('15 Overhauled Iconic Locations & Clean-Sky Solvability', () => {
         );
         expect(sol, `Location ${locId} player ${i} must be solvable`).not.toBeNull();
       }
+
+      // Verify rooftops sit cleanly in the lower quarter (~70%+ open sky!)
+      for (const pos of round.spawnPositions) {
+        expect(pos.y, `Location ${locId} spawn rooftop should leave ~75% open sky`).toBeGreaterThanOrEqual(
+          WORLD_HEIGHT * 0.72,
+        );
+      }
     }
   });
 
   it('keeps the St. Louis Gateway Arch hollow underneath for threading shots', () => {
     const stLouis = buildLocation('st-louis');
     const terrain = new SkylineTerrain(stLouis);
-    expect(terrain.isSolid(600, WORLD_HEIGHT - 220)).toBe(false);
-    expect(terrain.isSolid(600, WORLD_HEIGHT - 120 - 260)).toBe(true);
+    // Air gap under scaled arch vs solid apex ring
+    expect(terrain.isSolid(600, WORLD_HEIGHT - 105)).toBe(false);
+    expect(terrain.isSolid(600, WORLD_HEIGHT - 168)).toBe(true);
   });
 });
 
