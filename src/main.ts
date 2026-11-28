@@ -5,14 +5,19 @@ import {
   BANANA_RADIUS,
   CRATER_RADIUS,
   GORILLA_HAND_OFFSET_Y,
+  GORILLA_HIT_CENTER_Y,
   GORILLA_HIT_RADIUS,
   LONG_SHOT_METERS,
   MAX_ANGLE,
   MAX_FLIGHT_SEC,
+  MAX_MIRRORS_PER_ROUND,
+  MAX_MIRROR_TILT,
   MAX_MOVES_PER_TURN,
   MAX_SPEED,
   MIN_ANGLE,
+  MIN_MIRROR_TILT,
   MIN_SPEED,
+  MIRROR_HALF_LENGTH,
   MOVE_STEP_PX,
   PIXELS_PER_METER,
   PLANETS,
@@ -44,13 +49,12 @@ import {
   stepKinematicBody,
   theoreticalFlatRange,
 } from './physics';
-import { GameRenderer } from './renderer';
+import { GameRenderer, renderCharacterAvatar } from './renderer';
 import { generateSolvableRound, SkylineTerrain, tryMoveGorilla } from './skyline';
 import type {
   AppMode,
   Banana,
   BotDifficulty,
-  BouncyTire,
   Cloud,
   ConcreteLocationId,
   ControllerCommand,
@@ -59,6 +63,7 @@ import type {
   GameConfig,
   GamePhase,
   LocationId,
+  MirrorPanel,
   Particle,
   Player,
   ThemeMode,
@@ -73,9 +78,6 @@ function byId<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
-/**
- * Custom pointer-driven touch slider with zero native Chrome long-press context menus!
- */
 class TouchSlider {
   private root: HTMLElement;
   private fill: HTMLElement;
@@ -179,6 +181,13 @@ class GorillaPhysicsGame {
   private tvClientBadge = byId<HTMLSpanElement>('tv-client-badge');
   private tvQrImg = byId<HTMLImageElement>('tv-qr-img');
 
+  // Mirror placement bar (single-screen)
+  private mirrorBar = byId<HTMLElement>('mirror-bar');
+  private mirrorTiltVal = byId<HTMLElement>('mirror-tilt-val');
+  private btnMirrorLock = byId<HTMLButtonElement>('btn-mirror-lock');
+  private btnMirrorCancel = byId<HTMLButtonElement>('btn-mirror-cancel');
+  private mirrorTiltSlider: TouchSlider;
+
   // Single-screen controls dock
   private controlsDock = byId<HTMLElement>('controls-dock');
   private moveLabel = byId<HTMLSpanElement>('move-label');
@@ -186,6 +195,8 @@ class GorillaPhysicsGame {
   private btnMoveRight = byId<HTMLButtonElement>('btn-move-right');
   private btnDirLeft = byId<HTMLButtonElement>('btn-dir-left');
   private btnDirRight = byId<HTMLButtonElement>('btn-dir-right');
+  private mirrorCountLabel = byId<HTMLSpanElement>('mirror-count-label');
+  private btnPlaceMirror = byId<HTMLButtonElement>('btn-place-mirror');
   private angleValLabel = byId<HTMLElement>('angle-val-label');
   private speedValLabel = byId<HTMLElement>('speed-val-label');
   private btnThrow = byId<HTMLButtonElement>('btn-throw');
@@ -209,9 +220,11 @@ class GorillaPhysicsGame {
   private botSkillRow = byId<HTMLDivElement>('bot-skill-row');
   private setupBotSkill = byId<HTMLDivElement>('setup-bot-skill');
   private setupNames = byId<HTMLDivElement>('setup-names');
+  private avatarGalleryLabel = byId<HTMLLabelElement>('avatar-gallery-label');
+  private setupAvatarGallery = byId<HTMLDivElement>('setup-avatar-gallery');
   private setupLocationSelect = byId<HTMLSelectElement>('setup-location-select');
   private setupPlanets = byId<HTMLDivElement>('setup-planets');
-  private setupTiresCheck = byId<HTMLInputElement>('setup-tires-check');
+  private setupMirrorsCheck = byId<HTMLInputElement>('setup-mirrors-check');
   private setupHintCheck = byId<HTMLInputElement>('setup-hint-check');
   private setupLabCheck = byId<HTMLInputElement>('setup-lab-check');
   private setupRetroCheck = byId<HTMLInputElement>('setup-retro-check');
@@ -228,13 +241,18 @@ class GorillaPhysicsGame {
   private btnCloseJackbox = byId<HTMLButtonElement>('btn-close-jackbox');
 
   // Dedicated Controller View DOM
-  private ctrlPlayerSwatch = byId<HTMLSpanElement>('ctrl-player-swatch');
+  private ctrlAvatarCanvas = byId<HTMLCanvasElement>('ctrl-avatar-canvas');
   private ctrlTurnHeading = byId<HTMLDivElement>('ctrl-turn-heading');
   private ctrlMetaLine = byId<HTMLDivElement>('ctrl-meta-line');
   private ctrlStatusBar = byId<HTMLDivElement>('ctrl-status-bar');
   private ctrlLocationChip = byId<HTMLSpanElement>('ctrl-location-chip');
   private ctrlWindChip = byId<HTMLSpanElement>('ctrl-wind-chip');
   private ctrlTriesChip = byId<HTMLSpanElement>('ctrl-tries-chip');
+  private ctrlMirrorCard = byId<HTMLDivElement>('ctrl-mirror-card');
+  private ctrlMirrorReadout = byId<HTMLElement>('ctrl-mirror-readout');
+  private ctrlMirrorLock = byId<HTMLButtonElement>('ctrl-mirror-lock');
+  private ctrlMirrorCancel = byId<HTMLButtonElement>('ctrl-mirror-cancel');
+  private ctrlBtnMirror = byId<HTMLButtonElement>('ctrl-btn-mirror');
   private ctrlMoveLabel = byId<HTMLSpanElement>('ctrl-move-label');
   private ctrlMoveLeft = byId<HTMLButtonElement>('ctrl-move-left');
   private ctrlMoveRight = byId<HTMLButtonElement>('ctrl-move-right');
@@ -251,6 +269,9 @@ class GorillaPhysicsGame {
   private btnCtrlExit = byId<HTMLButtonElement>('btn-ctrl-exit');
   private ctrlAngleSlider: TouchSlider;
   private ctrlSpeedSlider: TouchSlider;
+  private ctrlMxSlider: TouchSlider;
+  private ctrlMySlider: TouchSlider;
+  private ctrlMtiltSlider: TouchSlider;
 
   // Game Over Modal
   private gameoverModal = byId<HTMLDivElement>('gameover-modal');
@@ -268,7 +289,13 @@ class GorillaPhysicsGame {
   private ctrlAimAngle = 45;
   private ctrlAimSpeed = 40;
   private ctrlAimDir: ThrowDirection = 1;
+  private ctrlMirrorX = 600;
+  private ctrlMirrorY = 230;
+  private ctrlMirrorTilt = -25;
   private lastCtrlSendMs = 0;
+
+  // Setup editing slot
+  private editingPlayerSlot = 0;
 
   // Game State
   private config: GameConfig = {
@@ -277,7 +304,7 @@ class GorillaPhysicsGame {
     triesPerTurn: 3,
     planetId: 'earth',
     locationId: 'random',
-    enableTires: true,
+    enableMirrors: true,
     botDifficulty: 'easy',
     playerNames: DEFAULT_PLAYER_CHARACTERS.map((id) => CHARACTERS[id].name),
     playerCharacters: [...DEFAULT_PLAYER_CHARACTERS],
@@ -290,8 +317,12 @@ class GorillaPhysicsGame {
   private phase: GamePhase = 'setup';
 
   private terrain: SkylineTerrain;
-  private currentLocationId: ConcreteLocationId = 'nyc';
-  private tires: BouncyTire[] = [];
+  private currentLocationId: ConcreteLocationId = 'chicago';
+  private mirrors: MirrorPanel[] = [];
+  private draftMirror: MirrorPanel | null = null;
+  private mirrorPlacedThisTurn = false;
+  private nextMirrorId = 1;
+
   private players: Player[] = [];
   private activePlayerIndex = 0;
   private currentRound = 1;
@@ -322,19 +353,18 @@ class GorillaPhysicsGame {
   private botThinkTimer = 0;
   private postShotTimer = 0;
   private pendingRespawnIds: number[] = [];
-  private isDraggingAim = false;
+  private dragMode: 'none' | 'aim' | 'mirror' = 'none';
 
   constructor() {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('2D canvas not supported');
     this.ctx = ctx;
 
-    // Suppress long-press context menu everywhere inside touch surfaces
     document.querySelectorAll('.no-touch-menu').forEach((el) => {
       el.addEventListener('contextmenu', (e) => e.preventDefault());
     });
 
-    // Custom touch sliders (single-screen dock)
+    // Single-screen touch sliders
     this.angleSlider = new TouchSlider(
       byId('slider-angle'),
       byId('slider-angle-fill'),
@@ -353,8 +383,17 @@ class GorillaPhysicsGame {
       40,
       (v) => this.setAimSpeed(v),
     );
+    this.mirrorTiltSlider = new TouchSlider(
+      byId('slider-mirror-tilt'),
+      byId('slider-mirror-tilt-fill'),
+      byId('slider-mirror-tilt-thumb'),
+      MIN_MIRROR_TILT,
+      MAX_MIRROR_TILT,
+      -25,
+      (v) => this.updateDraftMirror(undefined, undefined, v),
+    );
 
-    // Custom touch sliders (Jackbox tablet/phone controller)
+    // Jackbox Tablet Controller touch sliders
     this.ctrlAngleSlider = new TouchSlider(
       byId('ctrl-slider-angle'),
       byId('ctrl-slider-angle-fill'),
@@ -381,10 +420,46 @@ class GorillaPhysicsGame {
         this.sendControllerAimThrottled();
       },
     );
+    this.ctrlMxSlider = new TouchSlider(
+      byId('ctrl-slider-mx'),
+      byId('ctrl-slider-mx-fill'),
+      byId('ctrl-slider-mx-thumb'),
+      110,
+      WORLD_WIDTH - 110,
+      600,
+      (v) => {
+        this.ctrlMirrorX = v;
+        this.sendControllerMirrorThrottled();
+      },
+    );
+    this.ctrlMySlider = new TouchSlider(
+      byId('ctrl-slider-my'),
+      byId('ctrl-slider-my-fill'),
+      byId('ctrl-slider-my-thumb'),
+      95,
+      WORLD_HEIGHT - 160,
+      230,
+      (v) => {
+        this.ctrlMirrorY = v;
+        this.sendControllerMirrorThrottled();
+      },
+    );
+    this.ctrlMtiltSlider = new TouchSlider(
+      byId('ctrl-slider-mtilt'),
+      byId('ctrl-slider-mtilt-fill'),
+      byId('ctrl-slider-mtilt-thumb'),
+      MIN_MIRROR_TILT,
+      MAX_MIRROR_TILT,
+      -25,
+      (v) => {
+        this.ctrlMirrorTilt = v;
+        this.ctrlMirrorReadout.textContent = `${v >= 0 ? '+' : ''}${v}°`;
+        this.sendControllerMirrorThrottled();
+      },
+    );
 
-    const preview = generateSolvableRound(2, PLANETS.earth.gravity, true, 'nyc', true, 1991);
+    const preview = generateSolvableRound(2, PLANETS.earth.gravity, true, 'chicago', 1991);
     this.terrain = preview.terrain;
-    this.tires = preview.tires;
     this.currentLocationId = preview.locationId;
 
     this.initAtmosphere();
@@ -393,7 +468,6 @@ class GorillaPhysicsGame {
     this.syncToolbarUI();
     this.setupPreviewScene(preview);
 
-    // Auto-join Controller Mode if opened via TV QR code (?room=XXXX)
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     if (roomParam && roomParam.trim().length === 4) {
@@ -425,8 +499,9 @@ class GorillaPhysicsGame {
 
   private setupPreviewScene(preview: ReturnType<typeof generateSolvableRound>): void {
     this.terrain = preview.terrain;
-    this.tires = preview.tires;
     this.currentLocationId = preview.locationId;
+    this.mirrors = [];
+    this.draftMirror = null;
     this.renderer.invalidateBuildings();
     this.windAccel = preview.windAccel;
     this.players = preview.spawnPositions.map((pos, i) => {
@@ -477,7 +552,6 @@ class GorillaPhysicsGame {
   }
 
   private initSetupUI(): void {
-    // Location selector (Random World Tour + 12 cities + 3 wild terrains)
     this.setupLocationSelect.innerHTML = '';
     const randomOpt = document.createElement('option');
     randomOpt.value = 'random';
@@ -485,7 +559,7 @@ class GorillaPhysicsGame {
     this.setupLocationSelect.appendChild(randomOpt);
 
     const cityGroup = document.createElement('optgroup');
-    cityGroup.label = 'Iconic World Cities (12)';
+    cityGroup.label = 'Iconic World Cities (12 — Chicago, Atlanta, NYC…)';
     const wildGroup = document.createElement('optgroup');
     wildGroup.label = 'Wild Non-Building Terrains (3)';
 
@@ -500,7 +574,6 @@ class GorillaPhysicsGame {
     this.setupLocationSelect.appendChild(wildGroup);
     this.setupLocationSelect.value = this.config.locationId;
 
-    // Planets
     this.setupPlanets.innerHTML = '';
     for (const id of PLANET_ORDER) {
       const p = PLANETS[id];
@@ -519,72 +592,106 @@ class GorillaPhysicsGame {
       this.setupPlanets.appendChild(btn);
     }
 
-    this.renderSetupNameInputs();
+    this.renderSetupPlayersAndGallery();
   }
 
-  private renderSetupNameInputs(): void {
-    this.setupNames.innerHTML = '';
+  /**
+   * Renders visual player cards with live mini-canvas gorilla portraits +
+   * the clickable 8-character visual avatar gallery underneath!
+   */
+  private renderSetupPlayersAndGallery(): void {
     const count = this.config.humanCount;
+    if (this.editingPlayerSlot >= count) this.editingPlayerSlot = 0;
     this.botSkillRow.classList.toggle('hidden', count !== 1);
 
+    this.setupNames.innerHTML = '';
     for (let i = 0; i < count; i++) {
       const charId = this.config.playerCharacters[i] ?? DEFAULT_PLAYER_CHARACTERS[i];
       const ch = CHARACTERS[charId];
       const row = document.createElement('div');
-      row.className = 'name-input-row';
+      row.className = `name-input-row${i === this.editingPlayerSlot ? ' editing' : ''}`;
       row.innerHTML = `
-        <span class="name-swatch" style="background:${ch.color}"></span>
-        <input type="text" maxlength="14" value="${this.config.playerNames[i] || ch.name}" aria-label="Player ${i + 1} name" />
-        <button type="button" class="char-pick-btn" title="Tap to switch gorilla character">${ch.name} ▸</button>
+        <canvas class="player-slot-avatar" width="60" height="60"></canvas>
+        <div class="player-slot-info">
+          <input type="text" maxlength="14" value="${this.config.playerNames[i] || ch.name}" aria-label="Player ${i + 1} name" />
+          <span class="player-slot-sub">Player ${i + 1} · ${ch.name} (${ch.title})</span>
+        </div>
       `;
-      const input = row.querySelector('input')!;
-      const swatch = row.querySelector<HTMLElement>('.name-swatch')!;
-      const pickBtn = row.querySelector<HTMLButtonElement>('.char-pick-btn')!;
+      const avatarCanvas = row.querySelector<HTMLCanvasElement>('canvas')!;
+      renderCharacterAvatar(avatarCanvas, charId, this.theme);
 
+      const input = row.querySelector('input')!;
+      input.addEventListener('focus', () => {
+        if (this.editingPlayerSlot !== i) {
+          this.editingPlayerSlot = i;
+          this.renderSetupPlayersAndGallery();
+        }
+      });
       input.addEventListener('input', () => {
         this.config.playerNames[i] = input.value.trim() || CHARACTERS[this.config.playerCharacters[i]].name;
       });
-
-      pickBtn.addEventListener('click', () => {
-        const curIdx = CHARACTER_ORDER.indexOf(this.config.playerCharacters[i]);
-        const nextId = CHARACTER_ORDER[(curIdx + 1) % CHARACTER_ORDER.length];
-        const prevDefault = CHARACTERS[this.config.playerCharacters[i]].name;
-        this.config.playerCharacters[i] = nextId;
-        const nextCh = CHARACTERS[nextId];
-        swatch.style.background = nextCh.color;
-        pickBtn.textContent = `${nextCh.name} ▸`;
-        if (!input.value.trim() || input.value.trim() === prevDefault) {
-          input.value = nextCh.name;
-          this.config.playerNames[i] = nextCh.name;
-        }
+      row.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).tagName === 'INPUT') return;
+        this.editingPlayerSlot = i;
+        this.renderSetupPlayersAndGallery();
         soundEngine.playTick();
       });
-
       this.setupNames.appendChild(row);
     }
 
     if (count === 1) {
-      const botCh = CHARACTERS['robo-kong'];
       const botRow = document.createElement('div');
       botRow.className = 'name-input-row';
       botRow.innerHTML = `
-        <span class="name-swatch" style="background:${botCh.color}"></span>
-        <input type="text" value="Robo-Kong (Bot)" disabled aria-label="Bot player" />
-        <span class="char-pick-btn">Laser Visor</span>
+        <canvas class="player-slot-avatar" width="60" height="60"></canvas>
+        <div class="player-slot-info">
+          <input type="text" value="Robo-Kong (Bot)" disabled aria-label="Bot player" />
+          <span class="player-slot-sub">AI Opponent · Laser Visor</span>
+        </div>
       `;
+      renderCharacterAvatar(botRow.querySelector('canvas')!, 'robo-kong', this.theme);
       this.setupNames.appendChild(botRow);
+    }
+
+    // Visual 8-Gorilla Avatar Gallery for the selected player slot
+    const editingName = this.config.playerNames[this.editingPlayerSlot] || `Player ${this.editingPlayerSlot + 1}`;
+    this.avatarGalleryLabel.textContent = `2. Pick Gorilla Avatar for Player ${this.editingPlayerSlot + 1} (${editingName})`;
+    this.setupAvatarGallery.innerHTML = '';
+    const activeChar = this.config.playerCharacters[this.editingPlayerSlot];
+
+    for (const charId of CHARACTER_ORDER) {
+      const ch = CHARACTERS[charId];
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = `avatar-card${charId === activeChar ? ' selected' : ''}`;
+      card.innerHTML = `
+        <canvas width="72" height="72"></canvas>
+        <strong>${ch.name}</strong>
+        <small>${ch.title}</small>
+      `;
+      renderCharacterAvatar(card.querySelector('canvas')!, charId, this.theme);
+      card.addEventListener('click', () => {
+        const slot = this.editingPlayerSlot;
+        const prevDefault = CHARACTERS[this.config.playerCharacters[slot]].name;
+        this.config.playerCharacters[slot] = charId;
+        if (!this.config.playerNames[slot] || this.config.playerNames[slot] === prevDefault) {
+          this.config.playerNames[slot] = ch.name;
+        }
+        soundEngine.playTick();
+        this.renderSetupPlayersAndGallery();
+      });
+      this.setupAvatarGallery.appendChild(card);
     }
   }
 
   private bindEvents(): void {
-    // Setup modal listeners
     this.setupPlayerCount.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-count]');
       if (!btn) return;
       this.config.humanCount = Number(btn.dataset.count);
       this.setupPlayerCount.querySelectorAll('.seg-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
-      this.renderSetupNameInputs();
+      this.renderSetupPlayersAndGallery();
     });
 
     this.setupRounds.addEventListener('click', (e) => {
@@ -616,7 +723,7 @@ class GorillaPhysicsGame {
     });
 
     this.btnStartMatch.addEventListener('click', () => {
-      this.config.enableTires = this.setupTiresCheck.checked;
+      this.config.enableMirrors = this.setupMirrorsCheck.checked;
       this.showAimHint = this.setupHintCheck.checked;
       this.showPhysicsLab = this.setupLabCheck.checked;
       this.setTheme(this.setupRetroCheck.checked ? 'retro' : 'modern');
@@ -624,21 +731,14 @@ class GorillaPhysicsGame {
       this.startMatch();
     });
 
-    // Jackbox modal triggers
-    const openJackbox = () => {
-      this.jackboxModal.classList.remove('hidden');
-    };
+    // Jackbox modal
+    const openJackbox = () => this.jackboxModal.classList.remove('hidden');
     this.btnJackbox.addEventListener('click', openJackbox);
     this.btnSetupJackbox.addEventListener('click', openJackbox);
-    this.btnCloseJackbox.addEventListener('click', () => {
-      this.jackboxModal.classList.add('hidden');
-    });
-
+    this.btnCloseJackbox.addEventListener('click', () => this.jackboxModal.classList.add('hidden'));
     this.btnStartTvHost.addEventListener('click', () => this.startTvHostMode());
     this.btnStopTvHost.addEventListener('click', () => this.stopTvHostMode());
-    this.btnJoinController.addEventListener('click', () => {
-      this.enterControllerMode(this.inputRoomCode.value);
-    });
+    this.btnJoinController.addEventListener('click', () => this.enterControllerMode(this.inputRoomCode.value));
     this.inputRoomCode.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.enterControllerMode(this.inputRoomCode.value);
     });
@@ -646,10 +746,10 @@ class GorillaPhysicsGame {
     // Toolbar toggles
     this.btnTheme.addEventListener('click', () => {
       this.setTheme(this.theme === 'modern' ? 'retro' : 'modern');
+      this.renderSetupPlayersAndGallery();
       soundEngine.playTick();
       this.broadcastHostState();
     });
-
     this.btnHint.addEventListener('click', () => {
       this.showAimHint = !this.showAimHint;
       this.setupHintCheck.checked = this.showAimHint;
@@ -657,7 +757,6 @@ class GorillaPhysicsGame {
       soundEngine.playTick();
       this.broadcastHostState();
     });
-
     this.btnSolution.addEventListener('click', () => {
       this.showSolution = !this.showSolution;
       if (this.showSolution) this.refreshVerifiedSolution();
@@ -665,7 +764,6 @@ class GorillaPhysicsGame {
       soundEngine.playTick();
       this.broadcastHostState();
     });
-
     this.btnLab.addEventListener('click', () => {
       this.showPhysicsLab = !this.showPhysicsLab;
       this.setupLabCheck.checked = this.showPhysicsLab;
@@ -673,24 +771,39 @@ class GorillaPhysicsGame {
       soundEngine.playTick();
       this.broadcastHostState();
     });
-
     this.btnSound.addEventListener('click', () => {
       soundEngine.toggleMute();
       this.syncToolbarUI();
       if (!soundEngine.isMuted()) soundEngine.playTick();
       this.broadcastHostState();
     });
-
     this.btnNewGame.addEventListener('click', () => {
       this.phase = 'setup';
       this.banana = null;
+      this.draftMirror = null;
+      this.syncMirrorUI();
       this.setupRetroCheck.checked = this.theme === 'retro';
       this.setupHintCheck.checked = this.showAimHint;
       this.setupLabCheck.checked = this.showPhysicsLab;
-      this.setupTiresCheck.checked = this.config.enableTires;
+      this.setupMirrorsCheck.checked = this.config.enableMirrors;
       this.gameoverModal.classList.add('hidden');
+      this.renderSetupPlayersAndGallery();
       this.setupModal.classList.remove('hidden');
       this.broadcastHostState();
+    });
+
+    // Mirror Placement bar (single-screen)
+    this.btnPlaceMirror.addEventListener('click', () => {
+      if (this.draftMirror) this.cancelDraftMirror();
+      else this.startDraftMirror();
+    });
+    this.btnMirrorLock.addEventListener('click', () => this.lockDraftMirror());
+    this.btnMirrorCancel.addEventListener('click', () => this.cancelDraftMirror());
+    this.mirrorBar.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-mirror-tilt]');
+      if (!btn || !this.draftMirror) return;
+      this.updateDraftMirror(undefined, undefined, this.draftMirror.angleDeg + Number(btn.dataset.mirrorTilt));
+      soundEngine.playTick();
     });
 
     // Single-screen controls dock
@@ -735,6 +848,16 @@ class GorillaPhysicsGame {
       this.sendControllerCommand({ type: 'aim', direction: 1 });
     });
 
+    this.ctrlBtnMirror.addEventListener('click', () => {
+      this.sendControllerCommand({ type: 'mirror_start' });
+    });
+    this.ctrlMirrorLock.addEventListener('click', () => {
+      this.sendControllerCommand({ type: 'mirror_lock' });
+    });
+    this.ctrlMirrorCancel.addEventListener('click', () => {
+      this.sendControllerCommand({ type: 'mirror_cancel' });
+    });
+
     this.controllerView.addEventListener('click', (e) => {
       const aBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-ctrl-angle]');
       if (aBtn) {
@@ -750,20 +873,28 @@ class GorillaPhysicsGame {
         this.ctrlSpeedSlider.setValue(this.ctrlAimSpeed);
         this.ctrlSpeedVal.textContent = `${this.ctrlAimSpeed} m/s`;
         this.sendControllerCommand({ type: 'aim', speed: this.ctrlAimSpeed });
+        return;
+      }
+      const mBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-ctrl-mtilt]');
+      if (mBtn) {
+        this.ctrlMirrorTilt = clamp(
+          this.ctrlMirrorTilt + Number(mBtn.dataset.ctrlMtilt),
+          MIN_MIRROR_TILT,
+          MAX_MIRROR_TILT,
+        );
+        this.ctrlMtiltSlider.setValue(this.ctrlMirrorTilt);
+        this.ctrlMirrorReadout.textContent = `${this.ctrlMirrorTilt >= 0 ? '+' : ''}${this.ctrlMirrorTilt}°`;
+        this.sendControllerCommand({ type: 'mirror_update', angleDeg: this.ctrlMirrorTilt });
       }
     });
 
-    this.ctrlBtnThrow.addEventListener('click', () => {
-      this.sendControllerCommand({ type: 'throw' });
-    });
-    this.ctrlBtnRematch.addEventListener('click', () => {
-      this.sendControllerCommand({ type: 'rematch' });
-    });
+    this.ctrlBtnThrow.addEventListener('click', () => this.sendControllerCommand({ type: 'throw' }));
+    this.ctrlBtnRematch.addEventListener('click', () => this.sendControllerCommand({ type: 'rematch' }));
     this.ctrlToggleHint.addEventListener('click', () => this.sendControllerCommand({ type: 'toggle', key: 'hint' }));
     this.ctrlToggleSolution.addEventListener('click', () => this.sendControllerCommand({ type: 'toggle', key: 'solution' }));
     this.ctrlToggleTheme.addEventListener('click', () => this.sendControllerCommand({ type: 'toggle', key: 'theme' }));
 
-    // Game Over modal buttons
+    // Game Over modal
     this.btnRematch.addEventListener('click', () => {
       this.gameoverModal.classList.add('hidden');
       this.startMatch();
@@ -771,25 +902,41 @@ class GorillaPhysicsGame {
     this.btnChangeSetup.addEventListener('click', () => {
       this.gameoverModal.classList.add('hidden');
       this.phase = 'setup';
+      this.renderSetupPlayersAndGallery();
       this.setupModal.classList.remove('hidden');
       this.broadcastHostState();
     });
 
-    // Canvas drag-to-aim (supports negative downward angles down to -30°!)
+    // Canvas pointer drag: drag Draft Mirror if grabbing near it, otherwise aim gorilla!
     this.canvas.addEventListener('pointerdown', (e) => {
       if (!this.canHumanControl()) return;
       e.preventDefault();
-      this.isDraggingAim = true;
-      this.canvas.setPointerCapture(e.pointerId);
-      this.updateAimFromPointer(e);
+      const { px, py } = this.pointerToWorld(e);
+
+      if (this.draftMirror && Math.hypot(px - this.draftMirror.x, py - this.draftMirror.y) <= MIRROR_HALF_LENGTH + 34) {
+        this.dragMode = 'mirror';
+        this.canvas.setPointerCapture(e.pointerId);
+        this.updateDraftMirror(px, py, undefined);
+      } else {
+        this.dragMode = 'aim';
+        this.canvas.setPointerCapture(e.pointerId);
+        this.updateAimFromWorld(px, py);
+      }
     });
+
     this.canvas.addEventListener('pointermove', (e) => {
-      if (!this.isDraggingAim || !this.canHumanControl()) return;
+      if (this.dragMode === 'none' || !this.canHumanControl()) return;
       e.preventDefault();
-      this.updateAimFromPointer(e);
+      const { px, py } = this.pointerToWorld(e);
+      if (this.dragMode === 'mirror') {
+        this.updateDraftMirror(px, py, undefined);
+      } else {
+        this.updateAimFromWorld(px, py);
+      }
     });
+
     const endDrag = () => {
-      this.isDraggingAim = false;
+      this.dragMode = 'none';
     };
     this.canvas.addEventListener('pointerup', endDrag);
     this.canvas.addEventListener('pointercancel', endDrag);
@@ -810,6 +957,10 @@ class GorillaPhysicsGame {
       } else if (e.key === 'f' || e.key === 'F') {
         e.preventDefault();
         this.setAimDirection(this.aimDirection === 1 ? -1 : 1);
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        if (this.draftMirror) this.lockDraftMirror();
+        else this.startDraftMirror();
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         this.setAimAngle(this.aimAngle + step);
@@ -827,6 +978,103 @@ class GorillaPhysicsGame {
         this.fireCurrentPlayerBanana();
       }
     });
+  }
+
+  private pointerToWorld(e: PointerEvent): { px: number; py: number } {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      px: ((e.clientX - rect.left) / rect.width) * WORLD_WIDTH,
+      py: ((e.clientY - rect.top) / rect.height) * WORLD_HEIGHT,
+    };
+  }
+
+  // ==================== Player-Placed Shared Round Mirrors ====================
+
+  private canPlaceMirrorNow(): boolean {
+    return this.canHumanControl() && this.config.enableMirrors && !this.mirrorPlacedThisTurn;
+  }
+
+  private startDraftMirror(): void {
+    if (!this.canPlaceMirrorNow()) return;
+    const active = this.players[this.activePlayerIndex];
+    if (!active) return;
+
+    // Position the initial draft mirror usefully in open sky between thrower and opponent
+    const opp = this.players.find((p) => p.id !== active.id);
+    const defaultX = opp ? Math.round((active.x + opp.x) / 2) : 600;
+    const defaultY = 210;
+    const defaultTilt = active.x < defaultX ? -25 : 25;
+
+    this.draftMirror = {
+      id: this.nextMirrorId++,
+      x: clamp(defaultX, 120, WORLD_WIDTH - 120),
+      y: clamp(defaultY, 100, WORLD_HEIGHT - 170),
+      halfLength: MIRROR_HALF_LENGTH,
+      angleDeg: defaultTilt,
+      ownerId: active.id,
+      ownerColor: active.color,
+      locked: false,
+      bounceAnim: 0,
+    };
+
+    this.mirrorTiltSlider.setValue(this.draftMirror.angleDeg);
+    this.mirrorTiltVal.textContent = `${this.draftMirror.angleDeg >= 0 ? '+' : ''}${this.draftMirror.angleDeg}°`;
+    this.syncMirrorUI();
+    soundEngine.playTick();
+    this.broadcastHostState();
+  }
+
+  private updateDraftMirror(x?: number, y?: number, angleDeg?: number): void {
+    if (!this.draftMirror) return;
+    if (x !== undefined) {
+      this.draftMirror.x = Math.round(clamp(x, 90, WORLD_WIDTH - 90));
+    }
+    if (y !== undefined) {
+      this.draftMirror.y = Math.round(clamp(y, 85, WORLD_HEIGHT - 130));
+    }
+    if (angleDeg !== undefined) {
+      this.draftMirror.angleDeg = Math.round(clamp(angleDeg, MIN_MIRROR_TILT, MAX_MIRROR_TILT));
+      this.mirrorTiltSlider.setValue(this.draftMirror.angleDeg);
+      this.mirrorTiltVal.textContent = `${this.draftMirror.angleDeg >= 0 ? '+' : ''}${this.draftMirror.angleDeg}°`;
+    }
+    if (this.showSolution) this.refreshVerifiedSolution();
+    this.broadcastHostState();
+  }
+
+  private lockDraftMirror(): void {
+    if (!this.draftMirror) return;
+    this.draftMirror.locked = true;
+    this.mirrors.push(this.draftMirror);
+    if (this.mirrors.length > MAX_MIRRORS_PER_ROUND) {
+      this.mirrors.shift(); // keep up to 4 shared mirrors per round!
+    }
+    this.draftMirror = null;
+    this.mirrorPlacedThisTurn = true;
+    this.syncMirrorUI();
+    soundEngine.playMirrorPing(1);
+    this.showToast('Mirror locked! It stays for the whole round — aim a bank shot!', 2.2);
+    if (this.showSolution) this.refreshVerifiedSolution();
+    this.broadcastHostState();
+  }
+
+  private cancelDraftMirror(): void {
+    this.draftMirror = null;
+    this.syncMirrorUI();
+    soundEngine.playTick();
+    if (this.showSolution) this.refreshVerifiedSolution();
+    this.broadcastHostState();
+  }
+
+  private syncMirrorUI(): void {
+    this.mirrorBar.classList.toggle('hidden', !this.draftMirror || this.appMode === 'tv-host');
+    this.mirrorCountLabel.textContent = `Mirror (${this.mirrors.length}/${MAX_MIRRORS_PER_ROUND})`;
+    const canPlace = this.canPlaceMirrorNow();
+    this.btnPlaceMirror.disabled = !canPlace && !this.draftMirror;
+    this.btnPlaceMirror.textContent = this.draftMirror
+      ? 'Cancel Mirror'
+      : this.mirrorPlacedThisTurn
+        ? 'Placed ✓'
+        : '+ Mirror';
   }
 
   // ==================== Jackbox TV Host & Controller ====================
@@ -853,19 +1101,15 @@ class GorillaPhysicsGame {
         this.tvHostStatus.textContent = `TV Room ${code} is live! Scan QR on your tablet or phone.`;
         this.btnJackbox.textContent = `TV: ${code}`;
         this.jackboxModal.classList.add('hidden');
-        if (this.phase === 'setup') {
-          this.startMatch();
-        } else {
-          this.broadcastHostState();
-        }
+        if (this.phase === 'setup') this.startMatch();
+        else this.broadcastHostState();
       },
       onClientCountChange: (count) => {
-        this.tvClientBadge.textContent =
-          count === 1 ? '1 controller live' : `${count} controllers live`;
-        // Hide bottom touch dock on TV when a remote tablet/phone is driving the game!
+        this.tvClientBadge.textContent = count === 1 ? '1 controller live' : `${count} controllers live`;
         this.controlsDock.classList.toggle('hidden', this.appMode === 'tv-host' && count > 0);
+        this.mirrorBar.classList.toggle('hidden', !this.draftMirror || (this.appMode === 'tv-host' && count > 0));
         if (count > 0) {
-          this.showToast('Tablet/Phone controller connected! Cast & pass away!', 2.6);
+          this.showToast('Tablet/Phone controller connected! Pass it around!', 2.6);
           this.broadcastHostState();
         }
       },
@@ -884,6 +1128,7 @@ class GorillaPhysicsGame {
     this.appMode = 'single';
     this.tvRoomCard.classList.add('hidden');
     this.controlsDock.classList.remove('hidden');
+    this.syncMirrorUI();
     this.btnStartTvHost.classList.remove('hidden');
     this.btnStopTvHost.classList.add('hidden');
     this.tvHostStatus.textContent = 'TV Host Mode stopped.';
@@ -928,6 +1173,14 @@ class GorillaPhysicsGame {
       if (cmd.speed !== undefined) this.setAimSpeed(cmd.speed);
     } else if (cmd.type === 'move') {
       this.moveActiveGorilla(cmd.dir);
+    } else if (cmd.type === 'mirror_start') {
+      if (!this.draftMirror) this.startDraftMirror();
+    } else if (cmd.type === 'mirror_update') {
+      this.updateDraftMirror(cmd.x, cmd.y, cmd.angleDeg);
+    } else if (cmd.type === 'mirror_lock') {
+      this.lockDraftMirror();
+    } else if (cmd.type === 'mirror_cancel') {
+      this.cancelDraftMirror();
     } else if (cmd.type === 'throw') {
       this.fireCurrentPlayerBanana();
     }
@@ -959,6 +1212,11 @@ class GorillaPhysicsGame {
       aimSpeed: this.aimSpeed,
       aimDirection: this.aimDirection,
       canControl: this.canHumanControl(),
+      canPlaceMirror: this.canPlaceMirrorNow(),
+      mirrorCount: this.mirrors.length,
+      draftMirror: this.draftMirror
+        ? { x: this.draftMirror.x, y: this.draftMirror.y, angleDeg: this.draftMirror.angleDeg }
+        : null,
       showAimHint: this.showAimHint,
       showSolution: this.showSolution,
       showPhysicsLab: this.showPhysicsLab,
@@ -1009,7 +1267,6 @@ class GorillaPhysicsGame {
     this.appMode = 'single';
     this.controllerView.classList.add('hidden');
     this.appShell.classList.remove('hidden');
-    // Clean ?room= from URL if present
     const url = new URL(window.location.href);
     url.searchParams.delete('room');
     window.history.replaceState({}, '', url.toString());
@@ -1031,13 +1288,25 @@ class GorillaPhysicsGame {
     });
   }
 
+  private sendControllerMirrorThrottled(): void {
+    const now = performance.now();
+    if (now - this.lastCtrlSendMs < 35) return;
+    this.lastCtrlSendMs = now;
+    this.sendControllerCommand({
+      type: 'mirror_update',
+      x: this.ctrlMirrorX,
+      y: this.ctrlMirrorY,
+      angleDeg: this.ctrlMirrorTilt,
+    });
+  }
+
   private applyControllerSnapshot(snap: ControllerStateSnapshot): void {
     if (this.theme !== snap.theme) {
       document.documentElement.setAttribute('data-theme', snap.theme);
     }
 
     const ch = CHARACTERS[snap.activeCharacterId];
-    this.ctrlPlayerSwatch.style.background = snap.activePlayerColor;
+    renderCharacterAvatar(this.ctrlAvatarCanvas, snap.activeCharacterId, snap.theme);
     this.ctrlTurnHeading.textContent =
       snap.phase === 'game_over'
         ? 'Match Complete!'
@@ -1057,6 +1326,23 @@ class GorillaPhysicsGame {
     const tryNum = snap.triesTotal - snap.triesLeft + 1;
     this.ctrlTriesChip.textContent = `Try ${Math.min(tryNum, snap.triesTotal)} / ${snap.triesTotal}`;
     this.ctrlMoveLabel.textContent = `Walk (${snap.movesLeft} left)`;
+
+    // Mirror placement card state
+    const hasDraft = Boolean(snap.draftMirror);
+    this.ctrlMirrorCard.classList.toggle('hidden', !hasDraft);
+    if (snap.draftMirror) {
+      this.ctrlMirrorX = snap.draftMirror.x;
+      this.ctrlMirrorY = snap.draftMirror.y;
+      this.ctrlMirrorTilt = snap.draftMirror.angleDeg;
+      this.ctrlMxSlider.setValue(snap.draftMirror.x);
+      this.ctrlMySlider.setValue(snap.draftMirror.y);
+      this.ctrlMtiltSlider.setValue(snap.draftMirror.angleDeg);
+      this.ctrlMirrorReadout.textContent = `${snap.draftMirror.angleDeg >= 0 ? '+' : ''}${snap.draftMirror.angleDeg}°`;
+    }
+    this.ctrlBtnMirror.disabled = !snap.canPlaceMirror || hasDraft;
+    this.ctrlBtnMirror.textContent = hasDraft
+      ? 'Placing Mirror…'
+      : `+ Mirror (${snap.mirrorCount}/${MAX_MIRRORS_PER_ROUND})`;
 
     this.ctrlAimAngle = snap.aimAngle;
     this.ctrlAimSpeed = snap.aimSpeed;
@@ -1131,7 +1417,7 @@ class GorillaPhysicsGame {
 
     if (this.movesRemaining <= 0) {
       soundEngine.playBlocked();
-      this.spawnFloatingText(active.x, active.y - 68, 'No steps left this turn!', '#fed7aa', 0.9);
+      this.spawnFloatingText(active.x, active.y - 94, 'No steps left this turn!', '#fed7aa', 0.9);
       return;
     }
 
@@ -1155,7 +1441,7 @@ class GorillaPhysicsGame {
           : result.reason === 'occupied'
             ? 'Gorilla in the way!'
             : 'Edge of skyline!';
-      this.spawnFloatingText(active.x, active.y - 68, reasonMsg, '#fca5a5', 0.9);
+      this.spawnFloatingText(active.x, active.y - 94, reasonMsg, '#fca5a5', 0.9);
       return;
     }
 
@@ -1166,7 +1452,7 @@ class GorillaPhysicsGame {
     soundEngine.playStep(result.dropped);
     if (result.dropped) {
       this.spawnDustPuff(active.x, active.y);
-      this.spawnFloatingText(active.x, active.y - 66, 'Dropped down!', '#bae6fd', 0.85);
+      this.spawnFloatingText(active.x, active.y - 92, 'Dropped down!', '#bae6fd', 0.85);
     }
 
     this.updateMoveUI();
@@ -1209,7 +1495,8 @@ class GorillaPhysicsGame {
 
     const planet = PLANETS[this.config.planetId];
     const origin = { x: active.x, y: active.y - GORILLA_HAND_OFFSET_Y };
-    const ownerHit = { x: active.x, y: active.y - 22 };
+    const ownerHit = { x: active.x, y: active.y - GORILLA_HIT_CENTER_Y };
+    const activeMirrors = this.draftMirror ? [...this.mirrors, this.draftMirror] : this.mirrors;
 
     const opponents = this.players
       .filter((p) => p.id !== active.id)
@@ -1221,14 +1508,14 @@ class GorillaPhysicsGame {
       });
 
     for (const opp of opponents) {
-      const target = { x: opp.x, y: opp.y - 22 };
+      const target = { x: opp.x, y: opp.y - GORILLA_HIT_CENTER_Y };
       const sol = findVerifiedSolution(
         origin,
         target,
         planet.gravity,
         this.windAccel,
         (x, y) => this.terrain.isSolid(x, y),
-        this.tires,
+        activeMirrors,
         ownerHit,
       );
       if (sol) {
@@ -1240,19 +1527,15 @@ class GorillaPhysicsGame {
     this.verifiedSolution = null;
   }
 
-  private updateAimFromPointer(e: PointerEvent): void {
+  private updateAimFromWorld(px: number, py: number): void {
     const active = this.players[this.activePlayerIndex];
     if (!active) return;
-
-    const rect = this.canvas.getBoundingClientRect();
-    const px = ((e.clientX - rect.left) / rect.width) * WORLD_WIDTH;
-    const py = ((e.clientY - rect.top) / rect.height) * WORLD_HEIGHT;
 
     const originX = active.x;
     const originY = active.y - GORILLA_HAND_OFFSET_Y;
 
     const dx = px - originX;
-    const dy = originY - py; // upward positive, negative allows aiming downward!
+    const dy = originY - py;
 
     const dir: ThrowDirection = dx >= 0 ? 1 : -1;
     const absDx = Math.max(4, Math.abs(dx));
@@ -1312,6 +1595,8 @@ class GorillaPhysicsGame {
     this.sunShocked = false;
     this.pendingRespawnIds = [];
     this.verifiedSolution = null;
+    this.mirrors = [];
+    this.draftMirror = null;
 
     const players: Player[] = [];
     for (let i = 0; i < this.config.humanCount; i++) {
@@ -1336,14 +1621,14 @@ class GorillaPhysicsGame {
       planet.gravity,
       this.config.planetId !== 'moon',
       this.config.locationId,
-      this.config.enableTires,
       seed,
       excludeLoc,
     );
 
     this.terrain = roundSetup.terrain;
     this.currentLocationId = roundSetup.locationId;
-    this.tires = roundSetup.tires;
+    this.mirrors = []; // clean sky at start of every round!
+    this.draftMirror = null;
     this.windAccel = roundSetup.windAccel;
     this.renderer.invalidateBuildings();
     this.sunShocked = false;
@@ -1376,6 +1661,8 @@ class GorillaPhysicsGame {
   private beginPlayerTurn(): void {
     this.triesRemaining = this.config.triesPerTurn;
     this.movesRemaining = MAX_MOVES_PER_TURN;
+    this.mirrorPlacedThisTurn = false;
+    this.draftMirror = null;
     this.turnEndedByHit = false;
     this.prepareAimStep(true);
   }
@@ -1405,11 +1692,12 @@ class GorillaPhysicsGame {
     this.turnText.textContent = active.isBot
       ? `${active.name} is calculating try ${tryNum}...`
       : isFirstTry
-        ? `${active.name}'s turn — move or aim & throw!`
+        ? `${active.name}'s turn — move, place a mirror, or throw!`
         : `${active.name} — refine from your ghost trail!`;
 
     this.setControlsEnabled(!active.isBot);
     this.updateMoveUI();
+    this.syncMirrorUI();
     this.renderScoreboardStrip();
     this.updatePhysicsLabReadout();
 
@@ -1428,6 +1716,7 @@ class GorillaPhysicsGame {
     this.btnMoveRight.disabled = !enabled || this.movesRemaining <= 0;
     this.btnDirLeft.disabled = !enabled;
     this.btnDirRight.disabled = !enabled;
+    this.btnPlaceMirror.disabled = !enabled || (!this.canPlaceMirrorNow() && !this.draftMirror);
     this.angleSlider.setDisabled(!enabled);
     this.speedSlider.setDisabled(!enabled);
     this.controlsDock.querySelectorAll<HTMLButtonElement>('.step-btn').forEach((b) => {
@@ -1466,7 +1755,7 @@ class GorillaPhysicsGame {
     const active = this.players[this.activePlayerIndex];
     if (active?.lastShot) {
       const s = active.lastShot;
-      const bounceTag = s.bounces > 0 ? ` · ${s.bounces} bounce` : '';
+      const bounceTag = s.bounces > 0 ? ` · ${s.bounces} mirror bounce` : '';
       this.labLast.textContent = `${s.flightTime.toFixed(1)}s · Peak ${Math.round(s.apexMeters)}m · Dist ${Math.round(s.distanceMeters)}m${bounceTag}`;
     } else if (this.aimAngle <= 0) {
       this.labLast.textContent = 'Downward / flat line drive';
@@ -1484,6 +1773,11 @@ class GorillaPhysicsGame {
   private fireCurrentPlayerBanana(): void {
     const active = this.players[this.activePlayerIndex];
     if (!active) return;
+
+    // Auto-lock any active draft mirror when throwing so players never lose their placement!
+    if (this.draftMirror) {
+      this.lockDraftMirror();
+    }
 
     const originX = active.x;
     const originY = active.y - GORILLA_HAND_OFFSET_Y;
@@ -1529,7 +1823,7 @@ class GorillaPhysicsGame {
     if (!target) return;
 
     const origin = { x: bot.x, y: bot.y - GORILLA_HAND_OFFSET_Y };
-    const targetCenter = { x: target.x, y: target.y - 22 };
+    const targetCenter = { x: target.x, y: target.y - GORILLA_HIT_CENTER_Y };
     const planet = PLANETS[this.config.planetId];
 
     const solution = solveBotShot(
@@ -1539,7 +1833,7 @@ class GorillaPhysicsGame {
       this.windAccel,
       bot.botDifficulty,
       (x, y) => this.terrain.isSolid(x, y),
-      this.tires,
+      this.mirrors,
     );
 
     this.setAimDirection(solution.direction);
@@ -1555,30 +1849,35 @@ class GorillaPhysicsGame {
 
     const planet = PLANETS[this.config.planetId];
     const owner = this.players.find((p) => p.id === b.ownerId);
-    const ownerHit = owner ? { x: owner.x, y: owner.y - 22 } : null;
+    const ownerHit = owner ? { x: owner.x, y: owner.y - GORILLA_HIT_CENTER_Y } : null;
 
-    // Fine fixed sub-step matching simulateVerifiedShot (<= 0.006s)
     const subSteps = Math.max(8, Math.ceil(dt / 0.005));
     const subDt = dt / subSteps;
 
     for (let s = 0; s < subSteps; s++) {
-      const { bouncedTireId } = stepKinematicBody(
+      const { bouncedMirrorId } = stepKinematicBody(
         b,
         subDt,
         planet.gravity,
         this.windAccel,
         ownerHit,
-        this.tires,
+        this.mirrors,
       );
       b.spin += subDt * 13 * (b.vx >= 0 ? 1 : -1);
 
-      if (bouncedTireId !== null) {
-        const tire = this.tires.find((t) => t.id === bouncedTireId);
-        if (tire) {
-          tire.bounceAnim = 0.45;
-          soundEngine.playBoing();
-          this.spawnFloatingText(tire.x, tire.y - 34, 'BOING!', '#6ee7b7', 1.1);
-          this.spawnExplosionParticles(b.x, b.y, '#34d399', 14);
+      if (bouncedMirrorId !== null) {
+        const mirror = this.mirrors.find((m) => m.id === bouncedMirrorId);
+        if (mirror) {
+          mirror.bounceAnim = 0.45;
+          soundEngine.playMirrorPing(b.bounces);
+          this.spawnFloatingText(
+            b.x,
+            b.y - 26,
+            b.bounces > 1 ? `CHAIN ×${b.bounces}!` : 'REFLECT!',
+            '#7dd3fc',
+            1.1,
+          );
+          this.spawnExplosionParticles(b.x, b.y, '#7dd3fc', 14);
         }
       }
 
@@ -1586,7 +1885,11 @@ class GorillaPhysicsGame {
       if (altMeters > b.maxApexMeters) b.maxApexMeters = altMeters;
 
       const lastTrail = b.trail[b.trail.length - 1];
-      if (!lastTrail || Math.hypot(b.x - lastTrail.x, b.y - lastTrail.y) >= 8) {
+      if (
+        bouncedMirrorId !== null ||
+        !lastTrail ||
+        Math.hypot(b.x - lastTrail.x, b.y - lastTrail.y) >= 8
+      ) {
         b.trail.push({ x: b.x, y: b.y });
       }
 
@@ -1603,12 +1906,15 @@ class GorillaPhysicsGame {
         this.renderScoreboardStrip();
       }
 
-      // Check Gorilla Direct Hits (clearance-armed self-hit prevents false self-blasts!)
+      // Check Gorilla Direct Hits
       for (const p of this.players) {
         if (p.id === b.ownerId && (!b.hasClearedOwner || b.elapsed < SELF_HIT_MIN_SEC)) {
           continue;
         }
-        if (Math.hypot(b.x - p.x, b.y - (p.y - 22)) <= GORILLA_HIT_RADIUS + BANANA_RADIUS) {
+        if (
+          Math.hypot(b.x - p.x, b.y - (p.y - GORILLA_HIT_CENTER_Y)) <=
+          GORILLA_HIT_RADIUS + BANANA_RADIUS
+        ) {
           this.resolveImpact(b.x, b.y, p);
           return;
         }
@@ -1620,7 +1926,6 @@ class GorillaPhysicsGame {
         return;
       }
 
-      // Out of Bounds
       if (
         b.x < -140 ||
         b.x > WORLD_WIDTH + 140 ||
@@ -1698,12 +2003,9 @@ class GorillaPhysicsGame {
     const pixelsDestroyed = this.terrain.carveCrater(ix, iy, craterRadius);
     owner.blocksDestroyed += pixelsDestroyed;
 
-    // Settle any gorilla whose ground got blasted away
     for (const p of this.players) {
       const groundY = this.terrain.getSurfaceY(p.x, Math.max(0, p.y - 6));
-      if (groundY > p.y && groundY < WORLD_HEIGHT) {
-        p.y = groundY;
-      }
+      if (groundY > p.y && groundY < WORLD_HEIGHT) p.y = groundY;
     }
 
     let outcome: 'hit' | 'splash' | 'building' | 'self' = 'building';
@@ -1715,7 +2017,7 @@ class GorillaPhysicsGame {
         directTarget.animation = 'ouch';
         soundEngine.playBuildingHit(this.theme);
         this.spawnExplosionParticles(ix, iy, '#f97316', 36);
-        this.spawnFloatingText(ix, iy - 28, 'SELF-BONK!', '#fca5a5', 1.2);
+        this.spawnFloatingText(ix, iy - 34, 'SELF-BONK!', '#fca5a5', 1.2);
         this.showToast(`Oops! ${owner.name} bonked themselves!`);
       } else {
         outcome = 'hit';
@@ -1727,8 +2029,9 @@ class GorillaPhysicsGame {
         const bonuses: string[] = [];
         if (b.bounces > 0) {
           owner.bankShotHits++;
-          gained += SCORE_BANK_SHOT_BONUS;
-          bonuses.push(`+${SCORE_BANK_SHOT_BONUS} Bank Shot!`);
+          const bankBonus = SCORE_BANK_SHOT_BONUS * b.bounces;
+          gained += bankBonus;
+          bonuses.push(`+${bankBonus} Mirror Bank!`);
         }
         if (this.config.triesPerTurn > 1 && isFirstTryOfTurn) {
           gained += SCORE_FIRST_TRY_BONUS;
@@ -1746,7 +2049,7 @@ class GorillaPhysicsGame {
         soundEngine.playGorillaHit(this.theme);
         this.triggerShake(10, 0.45);
         this.spawnExplosionParticles(ix, iy, '#fde047', 56);
-        this.spawnFloatingText(ix, iy - 34, `DIRECT HIT! +${gained}`, '#fde047', 1.3);
+        this.spawnFloatingText(ix, iy - 38, `DIRECT HIT! +${gained}`, '#fde047', 1.3);
         const bonusStr = bonuses.length > 0 ? ` (${bonuses.join(' ')})` : '';
         this.showToast(`${owner.name} hit ${directTarget.name}! +${gained} pts${bonusStr}`, 2.5);
       }
@@ -1755,7 +2058,7 @@ class GorillaPhysicsGame {
       let splashedPlayer: Player | null = null;
       for (const p of this.players) {
         if (p.id === owner.id) continue;
-        if (Math.hypot(ix - p.x, iy - (p.y - 22)) <= SPLASH_RADIUS) {
+        if (Math.hypot(ix - p.x, iy - (p.y - GORILLA_HIT_CENTER_Y)) <= SPLASH_RADIUS) {
           splashedPlayer = p;
           break;
         }
@@ -1769,7 +2072,7 @@ class GorillaPhysicsGame {
         soundEngine.playBuildingHit(this.theme);
         this.triggerShake(7, 0.32);
         this.spawnExplosionParticles(ix, iy, '#fb923c', 38);
-        this.spawnFloatingText(ix, iy - 26, `CLOSE CALL! +${SCORE_SPLASH_HIT}`, '#fed7aa', 1.15);
+        this.spawnFloatingText(ix, iy - 28, `CLOSE CALL! +${SCORE_SPLASH_HIT}`, '#fed7aa', 1.15);
         const retryNote =
           this.triesRemaining > 0
             ? ` — ${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left!`
@@ -1781,7 +2084,7 @@ class GorillaPhysicsGame {
         this.spawnExplosionParticles(ix, iy, '#f97316', 28);
         if (this.triesRemaining > 0 && !owner.isBot) {
           this.showToast(
-            `Impact! ${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left — adjust using your ghost trail.`,
+            `Impact! ${this.triesRemaining} ${this.triesRemaining === 1 ? 'try' : 'tries'} left — adjust or place a Mirror!`,
             1.7,
           );
         }
@@ -1840,23 +2143,23 @@ class GorillaPhysicsGame {
           (c) =>
             c.y < WORLD_HEIGHT - 20 &&
             Math.abs(c.x - p.x) > 80 &&
-            others.every((o) => Math.abs(c.x - o.x) > 85),
+            others.every((o) => Math.abs(c.x - o.x) > 95),
         )
         .sort(() => Math.random() - 0.5);
 
       let chosen = candidates[0];
       for (const c of candidates) {
         const origin = { x: c.x, y: c.y - GORILLA_HAND_OFFSET_Y };
-        const ownerHit = { x: c.x, y: c.y - 22 };
+        const ownerHit = { x: c.x, y: c.y - GORILLA_HIT_CENTER_Y };
         const solvable = others.some((o) =>
           Boolean(
             findVerifiedSolution(
               origin,
-              { x: o.x, y: o.y - 22 },
+              { x: o.x, y: o.y - GORILLA_HIT_CENTER_Y },
               planet.gravity,
               this.windAccel,
               (x, y) => this.terrain.isSolid(x, y),
-              this.tires,
+              this.mirrors,
               ownerHit,
             ),
           ),
@@ -1874,7 +2177,7 @@ class GorillaPhysicsGame {
       }
       p.animation = 'idle';
       p.preferredDirection = this.pickDefaultDirectionFor(p);
-      this.spawnFloatingText(p.x, p.y - 60, `${p.name} relocated!`, '#ffffff', 0.95);
+      this.spawnFloatingText(p.x, p.y - 90, `${p.name} relocated!`, '#ffffff', 0.95);
     }
 
     this.pendingRespawnIds = [];
@@ -1930,7 +2233,7 @@ class GorillaPhysicsGame {
           <span class="name-swatch" style="background:${p.color}"></span>
           <div>
             <div>${p.name} <span class="standing-meta">(${ch.name})</span></div>
-            <div class="standing-meta">${p.hits} hit${p.hits === 1 ? '' : 's'} · ${p.splashHits} close call${p.splashHits === 1 ? '' : 's'}${p.bankShotHits > 0 ? ` · ${p.bankShotHits} bank shot${p.bankShotHits === 1 ? '' : 's'}` : ''}</div>
+            <div class="standing-meta">${p.hits} hit${p.hits === 1 ? '' : 's'} · ${p.splashHits} close call${p.splashHits === 1 ? '' : 's'}${p.bankShotHits > 0 ? ` · ${p.bankShotHits} mirror bank${p.bankShotHits === 1 ? '' : 's'}` : ''}</div>
           </div>
         </div>
         <span class="standing-score">${p.score} pts</span>
@@ -2007,8 +2310,8 @@ class GorillaPhysicsGame {
     if (this.appMode === 'controller') return;
     this.timeSec += dt;
 
-    for (const tire of this.tires) {
-      if (tire.bounceAnim > 0) tire.bounceAnim = Math.max(0, tire.bounceAnim - dt);
+    for (const m of this.mirrors) {
+      if (m.bounceAnim > 0) m.bounceAnim = Math.max(0, m.bounceAnim - dt);
     }
 
     const windSpeedPx = this.windAccel * 24;
@@ -2090,7 +2393,8 @@ class GorillaPhysicsGame {
         gravity: planet.gravity,
         windAccel: this.windAccel,
         terrain: this.terrain,
-        tires: this.tires,
+        mirrors: this.mirrors,
+        draftMirror: this.draftMirror,
         players: this.players,
         activePlayerIndex: this.activePlayerIndex,
         aimAngle: this.aimAngle,

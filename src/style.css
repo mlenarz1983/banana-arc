@@ -900,18 +900,40 @@ html[data-theme='retro'] .touch-slider-thumb {
 .name-input-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   background: var(--surface-alt);
-  border: 1.5px solid var(--border);
+  border: 2px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 6px 8px;
+  padding: 6px 10px;
+  cursor: pointer;
 }
 
-.name-swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
+.name-input-row.editing {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.player-slot-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
   flex-shrink: 0;
+}
+
+.player-slot-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.player-slot-sub {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--ink-muted);
 }
 
 .name-input-row input {
@@ -921,28 +943,134 @@ html[data-theme='retro'] .touch-slider-thumb {
   background: transparent;
   color: var(--ink);
   font-family: inherit;
-  font-size: 0.88rem;
-  font-weight: 700;
+  font-size: 0.92rem;
+  font-weight: 800;
   outline: none;
+  padding: 0;
 }
 
-.char-pick-btn {
+/* Visual 8-Gorilla Avatar Portrait Gallery */
+.avatar-gallery {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.avatar-card {
   appearance: none;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 6px;
+  background: var(--surface-alt);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
   color: var(--ink);
   font-family: inherit;
-  font-size: 0.74rem;
+  cursor: pointer;
+  transition: transform 0.1s ease, border-color 0.15s ease;
+}
+
+.avatar-card:hover {
+  border-color: var(--secondary);
+  transform: translateY(-1px);
+}
+
+.avatar-card.selected {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 4px 12px rgba(217, 93, 57, 0.2);
+}
+
+.avatar-card canvas {
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+}
+
+.avatar-card strong {
+  font-size: 0.76rem;
   font-weight: 800;
-  padding: 4px 8px;
-  border-radius: 6px;
+}
+
+.avatar-card small {
+  font-size: 0.66rem;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+/* Mirror Trigger & Placement Drawer */
+.mirror-trigger-btn {
+  appearance: none;
+  border: 1.5px solid var(--tv-accent);
+  background: var(--tv-accent);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 800;
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.mirror-trigger-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mirror-bar {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr auto;
+  gap: 14px;
+  align-items: center;
+  background: var(--surface);
+  border: 2px solid #0ea5e9;
+  border-radius: var(--radius);
+  padding: 11px 16px;
+  box-shadow: var(--shadow);
+}
+
+.mirror-bar-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mirror-bar-info strong {
+  font-size: 0.92rem;
+  color: #0284c7;
+}
+
+.mirror-bar-info span {
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+
+.mirror-tilt-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.mirror-bar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ctrl-avatar-canvas {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  background: var(--surface-alt);
+  border: 2px solid var(--border);
   flex-shrink: 0;
 }
 
-.char-pick-btn:hover {
-  border-color: var(--accent);
+.ctrl-card--mirror {
+  border-color: #0ea5e9;
 }
 
 .select-input {
@@ -1204,15 +1332,15 @@ html[data-theme='retro'] .touch-slider-thumb {
 }
 
 @media (max-width: 980px) {
-  .controls-dock {
+  .controls-dock,
+  .mirror-bar {
     grid-template-columns: 1fr 1fr;
   }
-  .dock-side-group {
-    grid-column: 1 / -1;
-    justify-content: space-between;
-  }
+  .dock-side-group,
+  .mirror-bar-actions,
   .control-group--fire {
     grid-column: 1 / -1;
+    justify-content: space-between;
   }
   .throw-btn {
     width: 100%;
@@ -1221,10 +1349,14 @@ html[data-theme='retro'] .touch-slider-thumb {
 
 @media (max-width: 620px) {
   .controls-dock,
+  .mirror-bar,
   .setup-row-split,
   .names-grid,
   .ctrl-row-two {
     grid-template-columns: 1fr;
+  }
+  .avatar-gallery {
+    grid-template-columns: repeat(2, 1fr);
   }
   .dock-side-group {
     flex-direction: column;
