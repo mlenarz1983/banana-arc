@@ -2,481 +2,644 @@
 <html lang="en" data-theme="modern">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Banana Arc — Gorilla Projectile Physics</title>
     <meta
       name="description"
-      content="A 1–4 player tribute to QBasic Gorillas with 15 iconic world locations (Chicago, Atlanta, NYC, and more), 8 illustrated gorilla characters, player-placed Physics Lab Mirror Panels, and Jackbox-style TV + Tablet mode."
+      content="A 1–4 player tribute to QBasic Gorillas with 15 iconic world locations, illustrated gorilla characters, angled Mirror Panels, and TV + Remote touchscreen mode."
     />
-    <script type="module" crossorigin src="./assets/index-CswhGCA0.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-JLxI2OuG.css">
+    <script type="module" crossorigin src="./assets/index-lcSerZPk.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CN9HFCR9.css">
   </head>
   <body>
-    <!-- Main Stage View (Single-Screen & TV Host Mode) -->
+    <!-- Main Stage View (Single-Screen & TV Display Mode) -->
     <div id="app" class="app-shell">
-      <header class="top-bar">
-        <div class="brand-group">
-          <h1 class="brand-title">Banana Arc</h1>
-          <span id="round-badge" class="status-chip">Round 1 / 5</span>
-          <span id="planet-badge" class="status-chip status-chip--planet">Earth · 9.8 m/s²</span>
+      <!-- Non-overlapping TV Display Status Strip (shown ONLY in TV Display Mode) -->
+      <header id="tv-status-strip" class="tv-status-strip hidden" aria-label="TV match status">
+        <div class="tv-strip-left">
+          <span id="tv-turn-dot" class="turn-dot"></span>
+          <strong id="tv-turn-name">Player 1</strong>
+          <span id="tv-tries-chip" class="chip chip--accent">Try 1 / 3</span>
+          <span id="tv-round-chip" class="chip">Round 1 / 5 · Chicago</span>
+          <span id="tv-wind-chip" class="chip">Calm</span>
         </div>
-
-        <nav class="toolbar" aria-label="Game options">
-          <button id="btn-jackbox" class="tool-btn tool-btn--tv" type="button" title="Host on TV with QR code or join on a tablet/phone">
-            TV / Tablet
+        <div id="tv-scores-row" class="tv-scores-row" aria-label="TV scoreboard"></div>
+        <div class="tv-strip-actions">
+          <button id="btn-tv-qr-toggle" class="icon-pill-btn" type="button" title="Show or hide room join QR code">
+            <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="3" y="14" width="7" height="7" rx="1" />
+              <path d="M14 14h3v3h-3zM20 14v3h-1M14 20h7" />
+            </svg>
+            <span id="tv-code-pill">----</span>
           </button>
-          <button id="btn-theme" class="tool-btn" type="button" title="Switch between Modern and Retro '90s visuals">
-            Theme: Modern
+          <button id="btn-tv-settings" class="icon-btn" type="button" aria-label="Open game settings" title="Settings">
+            <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
           </button>
-          <button id="btn-hint" class="tool-btn" type="button" aria-pressed="false" title="Show short aiming arc preview">
-            Aim Hint: Off
-          </button>
-          <button id="btn-solution" class="tool-btn" type="button" aria-pressed="false" title="Show a verified winning trajectory and exact settings">
-            Solution: Off
-          </button>
-          <button id="btn-lab" class="tool-btn" type="button" aria-pressed="true" title="Show Vx/Vy vectors and Physics Lab stats">
-            Physics Lab: On
-          </button>
-          <button id="btn-sound" class="tool-btn" type="button" aria-pressed="true" title="Toggle sound effects">
-            Sound: On
-          </button>
-          <button id="btn-new-game" class="tool-btn tool-btn--accent" type="button">
-            Setup
-          </button>
-        </nav>
+        </div>
       </header>
 
-      <main class="stage-wrap">
-        <div id="canvas-frame" class="canvas-frame no-touch-menu">
-          <canvas
-            id="game-canvas"
-            width="1200"
-            height="680"
-            aria-label="Banana Arc game stage"
-          ></canvas>
+      <main class="workspace">
+        <!-- Playable Map Stage (Clean Sky — Zero Floating Text Clutter) -->
+        <section id="stage-area" class="stage-area no-touch-menu" aria-label="Game stage">
+          <div id="canvas-frame" class="canvas-frame">
+            <canvas id="game-canvas" width="1200" height="680" aria-label="Banana Arc skyline stage"></canvas>
 
-          <div id="turn-banner" class="hud-banner" aria-live="polite">
-            <span id="turn-dot" class="turn-dot"></span>
-            <span id="turn-text">Get ready to throw!</span>
-            <span id="tries-badge" class="tries-badge">Try 1 / 3</span>
-          </div>
+            <!-- Floating Re-Open Panel Pill (only visible in landscape when right panel is collapsed) -->
+            <button id="btn-panel-expand" class="stage-expand-btn hidden" type="button" aria-label="Show controls panel" title="Show controls">
+              <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              <span>Controls</span>
+            </button>
 
-          <div id="scoreboard-strip" class="hud-scores" aria-label="Scoreboard"></div>
-
-          <!-- TV Host Room Code + QR Card (visible in TV Host Mode) -->
-          <aside id="tv-room-card" class="tv-room-card hidden" aria-label="TV room join card">
-            <div class="tv-room-head">
-              <span class="tv-room-k">ROOM CODE</span>
-              <strong id="tv-room-code" class="tv-room-code">----</strong>
-              <span id="tv-client-badge" class="tv-client-badge">0 connected</span>
-            </div>
-            <img id="tv-qr-img" class="tv-qr-img" alt="Scan to open tablet/phone controller" />
-            <div class="tv-room-foot">Scan with tablet/phone</div>
-          </aside>
-
-          <div id="toast-banner" class="toast-banner hidden" aria-live="polite"></div>
-        </div>
-
-        <!-- Mirror Placement Drawer (appears when player clicks + Place Mirror) -->
-        <section id="mirror-bar" class="mirror-bar hidden no-touch-menu" aria-label="Mirror placement controls">
-          <div class="mirror-bar-info">
-            <strong>Physics Lab Mirror</strong>
-            <span>Drag the glowing mirror anywhere in the sky, then tilt it to bounce your shot (θ_in = θ_out)!</span>
-          </div>
-          <div class="mirror-tilt-group">
-            <div class="slider-header">
-              <span class="control-label">Mirror Tilt</span>
-              <div class="stepper-row">
-                <button class="step-btn" type="button" data-mirror-tilt="-15">-15°</button>
-                <button class="step-btn" type="button" data-mirror-tilt="-5">-5°</button>
-                <strong id="mirror-tilt-val" class="val-pill">-25°</strong>
-                <button class="step-btn" type="button" data-mirror-tilt="5">+5°</button>
-                <button class="step-btn" type="button" data-mirror-tilt="15">+15°</button>
+            <!-- TV Display Room Join Card (shown only while waiting for remote or toggled on) -->
+            <aside id="tv-room-card" class="tv-room-card hidden" aria-label="TV room join card">
+              <div class="tv-room-head">
+                <span class="tv-room-k">ROOM CODE</span>
+                <strong id="tv-room-code" class="tv-room-code">----</strong>
+                <span id="tv-client-badge" class="tv-client-badge">0 connected</span>
               </div>
-            </div>
-            <div id="slider-mirror-tilt" class="touch-slider" role="slider" aria-label="Mirror tilt angle" aria-valuemin="-80" aria-valuemax="80" aria-valuenow="-25">
-              <div class="touch-slider-track">
-                <div id="slider-mirror-tilt-fill" class="touch-slider-fill"></div>
-                <div id="slider-mirror-tilt-thumb" class="touch-slider-thumb"></div>
-              </div>
-            </div>
-          </div>
-          <div class="mirror-bar-actions">
-            <button id="btn-mirror-lock" class="primary-btn" type="button">Lock Mirror</button>
-            <button id="btn-mirror-cancel" class="secondary-btn" type="button">Cancel</button>
+              <img id="tv-qr-img" class="tv-qr-img" alt="Scan to open remote controller" />
+              <div class="tv-room-foot">Scan on phone or tablet</div>
+            </aside>
+
+            <div id="toast-banner" class="toast-banner hidden" aria-live="polite"></div>
           </div>
         </section>
 
-        <!-- Touch-First Controls Dock -->
-        <section id="controls-dock" class="controls-dock no-touch-menu" aria-label="Throw and movement controls">
-          <div class="dock-side-group">
-            <div class="control-group">
-              <span id="move-label" class="control-label">Move (8 left)</span>
-              <div class="dir-toggle" role="group" aria-label="Move gorilla left or right">
-                <button id="btn-move-left" class="dir-btn" type="button" title="Walk left (A)">← Step</button>
-                <button id="btn-move-right" class="dir-btn" type="button" title="Walk right (D)">Step →</button>
+        <!-- Focused Mode Control Panel (Right 25% in Landscape, Bottom ~36% in Portrait) -->
+        <aside id="control-panel" class="control-panel no-touch-menu" aria-label="Player controls">
+          <!-- Compact Turn & Meta Header + Single Settings Gear -->
+          <div class="panel-header">
+            <div class="panel-turn-info">
+              <div class="panel-player-row">
+                <span id="turn-dot" class="turn-dot"></span>
+                <strong id="turn-player-name" class="panel-player-name">Player 1</strong>
+                <span id="tries-badge" class="chip chip--accent">Try 1/3</span>
               </div>
+              <div id="panel-meta-line" class="panel-meta-line">R1/5 · Chicago · Calm</div>
             </div>
 
-            <div class="control-group">
-              <span class="control-label">Aim Side</span>
-              <div class="dir-toggle" role="group" aria-label="Throw direction">
-                <button id="btn-dir-left" class="dir-btn" type="button">← Left</button>
-                <button id="btn-dir-right" class="dir-btn active" type="button">Right →</button>
-              </div>
-            </div>
-
-            <div class="control-group">
-              <span id="mirror-count-label" class="control-label">Mirror (0/4)</span>
-              <button id="btn-place-mirror" class="mirror-trigger-btn" type="button" title="Place an angled Physics Lab Mirror in the sky">
-                + Mirror
+            <div class="panel-header-actions">
+              <button id="btn-panel-collapse" class="icon-btn panel-collapse-btn" type="button" aria-label="Hide controls panel" title="Hide controls">
+                <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+              <button id="btn-settings" class="icon-btn" type="button" aria-label="Open settings" title="Settings &amp; Match Options">
+                <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
               </button>
             </div>
           </div>
 
-          <!-- Custom Touch Slider: Angle (-30° to 89°) -->
-          <div class="control-group control-group--slider">
-            <div class="slider-header">
-              <span class="control-label">Angle</span>
-              <div class="stepper-row">
-                <button class="step-btn" type="button" data-step-angle="-5">-5</button>
-                <button class="step-btn" type="button" data-step-angle="-1">-1</button>
-                <strong id="angle-val-label" class="val-pill">45°</strong>
-                <button class="step-btn" type="button" data-step-angle="1">+1</button>
-                <button class="step-btn" type="button" data-step-angle="5">+5</button>
-              </div>
-            </div>
-            <div id="slider-angle" class="touch-slider" role="slider" aria-label="Launch angle" aria-valuemin="-30" aria-valuemax="89" aria-valuenow="45" tabindex="0">
-              <div class="touch-slider-track">
-                <div id="slider-angle-fill" class="touch-slider-fill"></div>
-                <div id="slider-angle-thumb" class="touch-slider-thumb"></div>
-              </div>
-            </div>
-          </div>
+          <!-- Inline Compact Scoreboard -->
+          <div id="scoreboard-strip" class="panel-scores" aria-label="Scores"></div>
 
-          <!-- Custom Touch Slider: Speed (8 to 95 m/s) -->
-          <div class="control-group control-group--slider">
-            <div class="slider-header">
-              <span class="control-label">Speed</span>
-              <div class="stepper-row">
-                <button class="step-btn" type="button" data-step-speed="-5">-5</button>
-                <button class="step-btn" type="button" data-step-speed="-1">-1</button>
-                <strong id="speed-val-label" class="val-pill">40 m/s</strong>
-                <button class="step-btn" type="button" data-step-speed="1">+1</button>
-                <button class="step-btn" type="button" data-step-speed="5">+5</button>
-              </div>
-            </div>
-            <div id="slider-speed" class="touch-slider" role="slider" aria-label="Launch speed" aria-valuemin="8" aria-valuemax="95" aria-valuenow="40" tabindex="0">
-              <div class="touch-slider-track">
-                <div id="slider-speed-fill" class="touch-slider-fill"></div>
-                <div id="slider-speed-thumb" class="touch-slider-thumb"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="control-group control-group--fire">
-            <button id="btn-throw" class="throw-btn" type="button">
-              Throw Banana!
+          <!-- 3-Tab Mode Switcher -->
+          <div id="mode-tabs" class="mode-tabs" role="tablist" aria-label="Action mode">
+            <button type="button" role="tab" class="mode-tab active" data-mode="throw" aria-selected="true">
+              <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <circle cx="12" cy="12" r="4" />
+                <line x1="12" y1="2" x2="12" y2="5" />
+                <line x1="12" y1="19" x2="12" y2="22" />
+                <line x1="2" y1="12" x2="5" y2="12" />
+                <line x1="19" y1="12" x2="22" y2="12" />
+              </svg>
+              <span>Throw</span>
+            </button>
+            <button type="button" role="tab" class="mode-tab" data-mode="move" aria-selected="false">
+              <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 12h14" />
+                <path d="M9 8l-4 4 4 4" />
+                <path d="M15 8l4 4-4 4" />
+              </svg>
+              <span>Move</span>
+            </button>
+            <button type="button" role="tab" class="mode-tab" data-mode="mirror" aria-selected="false">
+              <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="5" y1="19" x2="19" y2="5" stroke-width="2.6" />
+                <path d="M4 9l5 5 5-5" />
+              </svg>
+              <span>Mirror</span>
+              <span id="mirror-tab-badge" class="tab-badge">0/4</span>
             </button>
           </div>
-        </section>
 
-        <section id="physics-lab-panel" class="physics-lab" aria-label="Physics Lab telemetry">
-          <div class="lab-metrics">
-            <div class="lab-stat">
-              <span class="lab-k">Horizontal Vx</span>
-              <span id="lab-vx" class="lab-v lab-v--vx">+28.3 m/s</span>
+          <!-- TAB 1: THROW MODE -->
+          <div id="pane-throw" class="mode-pane">
+            <!-- Compact Aim Side + Optional Solution Pill -->
+            <div class="throw-top-row">
+              <div class="dir-toggle" role="group" aria-label="Throw direction">
+                <button id="btn-dir-left" class="dir-btn" type="button" aria-label="Aim left">
+                  <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="19" y1="12" x2="5" y2="12" />
+                    <polyline points="12 19 5 12 12 5" />
+                  </svg>
+                  <span>Left</span>
+                </button>
+                <button id="btn-dir-right" class="dir-btn active" type="button" aria-label="Aim right">
+                  <span>Right</span>
+                  <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                    <polyline points="12 5 19 12 12 19" />
+                  </svg>
+                </button>
+              </div>
+              <div id="panel-solution-pill" class="solution-pill hidden"></div>
             </div>
-            <div class="lab-stat">
-              <span class="lab-k">Vertical Vy</span>
-              <span id="lab-vy" class="lab-v lab-v--vy">+28.3 m/s</span>
+
+            <!-- Sliders Area (side-by-side on compact portrait, stacked on landscape) -->
+            <div class="sliders-stack">
+              <!-- Angle (-30° to 89°) -->
+              <div class="slider-block">
+                <div class="slider-header">
+                  <span class="control-label">Angle</span>
+                  <div class="nudge-group">
+                    <button class="nudge-btn" type="button" data-step-angle="-1" aria-label="Decrease angle">−</button>
+                    <strong id="angle-val-label" class="val-pill">45°</strong>
+                    <button class="nudge-btn" type="button" data-step-angle="1" aria-label="Increase angle">+</button>
+                  </div>
+                </div>
+                <div id="slider-angle" class="touch-slider" role="slider" aria-label="Launch angle" aria-valuemin="-30" aria-valuemax="89" aria-valuenow="45" tabindex="0">
+                  <div class="touch-slider-track">
+                    <div id="slider-angle-fill" class="touch-slider-fill"></div>
+                    <div id="slider-angle-thumb" class="touch-slider-thumb"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Speed (8 to 95 m/s) -->
+              <div class="slider-block">
+                <div class="slider-header">
+                  <span class="control-label">Speed</span>
+                  <div class="nudge-group">
+                    <button class="nudge-btn" type="button" data-step-speed="-1" aria-label="Decrease speed">−</button>
+                    <strong id="speed-val-label" class="val-pill">40 m/s</strong>
+                    <button class="nudge-btn" type="button" data-step-speed="1" aria-label="Increase speed">+</button>
+                  </div>
+                </div>
+                <div id="slider-speed" class="touch-slider" role="slider" aria-label="Launch speed" aria-valuemin="8" aria-valuemax="95" aria-valuenow="40" tabindex="0">
+                  <div class="touch-slider-track">
+                    <div id="slider-speed-fill" class="touch-slider-fill"></div>
+                    <div id="slider-speed-thumb" class="touch-slider-thumb"></div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="lab-stat">
-              <span class="lab-k">Gravity (g)</span>
-              <span id="lab-g" class="lab-v">9.8 m/s²</span>
+
+            <!-- Primary Big Throw CTA -->
+            <button id="btn-throw" class="throw-btn" type="button">
+              <svg class="ui-ico ui-ico--lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 12h14" />
+                <path d="M13 5l7 7-7 7" />
+              </svg>
+              <span>THROW!</span>
+            </button>
+          </div>
+
+          <!-- TAB 2: MOVE MODE -->
+          <div id="pane-move" class="mode-pane hidden">
+            <div class="pane-status-row">
+              <strong id="move-label">8 steps left</strong>
+              <span class="pane-hint">Drop down roofs · no climbing</span>
             </div>
-            <div class="lab-stat">
-              <span class="lab-k">Wind Accel</span>
-              <span id="lab-wind" class="lab-v">0.0 m/s²</span>
-            </div>
-            <div class="lab-stat">
-              <span class="lab-k">Last Shot</span>
-              <span id="lab-last" class="lab-v">Ready to measure</span>
+            <div class="move-btn-grid">
+              <button id="btn-move-left" class="big-action-btn" type="button">
+                <svg class="ui-ico ui-ico--lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="19" y1="12" x2="5" y2="12" />
+                  <polyline points="12 19 5 12 12 5" />
+                </svg>
+                <span>Walk Left</span>
+              </button>
+              <button id="btn-move-right" class="big-action-btn" type="button">
+                <span>Walk Right</span>
+                <svg class="ui-ico ui-ico--lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                  <polyline points="12 5 19 12 12 19" />
+                </svg>
+              </button>
             </div>
           </div>
-          <p id="lab-tip" class="lab-tip">
-            Tip: Tap "+ Mirror" on your turn to place &amp; tilt a flat Physics Lab Mirror in the sky—mirrors stay all round for multi-bounce chain reactions!
-          </p>
-        </section>
+
+          <!-- TAB 3: MIRROR MODE -->
+          <div id="pane-mirror" class="mode-pane hidden">
+            <div class="pane-status-row">
+              <strong id="mirror-count-label">0 / 4 mirrors this round</strong>
+              <span class="pane-hint">1 per turn · shared all round</span>
+            </div>
+
+            <!-- Idle state: tap to spawn a draggable mirror -->
+            <div id="mirror-idle-box" class="mirror-idle-box">
+              <button id="btn-place-mirror" class="big-action-btn big-action-btn--mirror" type="button">
+                <svg class="ui-ico ui-ico--lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                <span>Place Mirror</span>
+              </button>
+            </div>
+
+            <!-- Drafting state: drag mirror on sky + adjust tilt + lock -->
+            <div id="mirror-draft-box" class="mirror-draft-box hidden">
+              <div class="slider-block">
+                <div class="slider-header">
+                  <span class="control-label">Tilt (drag mirror in sky)</span>
+                  <div class="nudge-group">
+                    <button class="nudge-btn" type="button" data-mirror-tilt="-5" aria-label="Tilt counter-clockwise">−</button>
+                    <strong id="mirror-tilt-val" class="val-pill">-25°</strong>
+                    <button class="nudge-btn" type="button" data-mirror-tilt="5" aria-label="Tilt clockwise">+</button>
+                  </div>
+                </div>
+                <div id="slider-mirror-tilt" class="touch-slider" role="slider" aria-label="Mirror tilt angle" aria-valuemin="-80" aria-valuemax="80" aria-valuenow="-25">
+                  <div class="touch-slider-track">
+                    <div id="slider-mirror-tilt-fill" class="touch-slider-fill"></div>
+                    <div id="slider-mirror-tilt-thumb" class="touch-slider-thumb"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="mirror-draft-actions">
+                <button id="btn-mirror-cancel" class="secondary-btn" type="button">Cancel</button>
+                <button id="btn-mirror-lock" class="primary-btn" type="button">Lock Mirror</button>
+              </div>
+            </div>
+          </div>
+        </aside>
       </main>
     </div>
 
-    <!-- Dedicated Jackbox Tablet / Phone Controller View -->
+    <!-- Slide-Over Settings Drawer (replaces old 7-button top bar) -->
+    <div id="settings-backdrop" class="drawer-backdrop hidden" aria-hidden="true">
+      <aside class="settings-drawer" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="drawer-header">
+          <h2 id="settings-title">Options</h2>
+          <button id="btn-close-settings" class="icon-btn" type="button" aria-label="Close options">
+            <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="drawer-body">
+          <button id="btn-open-remote" class="drawer-item drawer-item--tv" type="button">
+            <span class="drawer-item-label">
+              <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="2" y="4" width="20" height="14" rx="2" />
+                <line x1="8" y1="21" x2="16" y2="21" />
+                <line x1="12" y1="18" x2="12" y2="21" />
+              </svg>
+              <span>TV &amp; Remote Mode</span>
+            </span>
+            <span id="drawer-tv-val" class="drawer-pill">Off</span>
+          </button>
+
+          <button id="btn-theme" class="drawer-item" type="button">
+            <span>Visual Theme</span>
+            <span id="drawer-theme-val" class="drawer-pill">Modern</span>
+          </button>
+
+          <button id="btn-hint" class="drawer-item" type="button" aria-pressed="false">
+            <span>Aim Hint Arc</span>
+            <span id="drawer-hint-val" class="drawer-pill">Off</span>
+          </button>
+
+          <button id="btn-solution" class="drawer-item" type="button" aria-pressed="false">
+            <span>Show Solution</span>
+            <span id="drawer-solution-val" class="drawer-pill">Off</span>
+          </button>
+          <div id="drawer-solution-readout" class="drawer-solution-box hidden"></div>
+
+          <button id="btn-lab" class="drawer-item" type="button" aria-pressed="false">
+            <span>Physics Vectors (Vx / Vy)</span>
+            <span id="drawer-lab-val" class="drawer-pill">Off</span>
+          </button>
+
+          <button id="btn-sound" class="drawer-item" type="button" aria-pressed="true">
+            <span>Sound Effects</span>
+            <span id="drawer-sound-val" class="drawer-pill active">On</span>
+          </button>
+
+          <hr class="drawer-sep" />
+
+          <button id="btn-new-game" class="primary-btn drawer-full-btn" type="button">
+            New Match / Setup
+          </button>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Dedicated Phone / Tablet Remote Controller View (3-Tab Ergonomics) -->
     <div id="controller-view" class="controller-shell hidden no-touch-menu">
       <header class="ctrl-header">
         <div class="ctrl-player-banner">
-          <canvas id="ctrl-avatar-canvas" class="ctrl-avatar-canvas" width="54" height="54"></canvas>
-          <div>
-            <div id="ctrl-turn-heading" class="ctrl-player-name">Connecting to TV...</div>
-            <div id="ctrl-meta-line" class="ctrl-meta">Enter a room code to start</div>
+          <canvas id="ctrl-avatar-canvas" class="ctrl-avatar-canvas" width="48" height="48"></canvas>
+          <div class="ctrl-player-text">
+            <div id="ctrl-turn-heading" class="ctrl-player-name">Connecting...</div>
+            <div id="ctrl-meta-line" class="ctrl-meta">Waiting for TV display</div>
           </div>
         </div>
-        <button id="btn-ctrl-exit" class="tool-btn" type="button">Exit</button>
+        <button id="btn-ctrl-settings" class="icon-btn" type="button" aria-label="Remote options" title="Options">
+          <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
       </header>
 
-      <div id="ctrl-status-bar" class="ctrl-status-bar">Waiting for TV room...</div>
+      <div id="ctrl-status-bar" class="ctrl-status-bar">Connecting to TV...</div>
 
-      <section id="ctrl-pad" class="ctrl-pad">
+      <!-- Compact Remote Options Bar (toggled by gear) -->
+      <div id="ctrl-options-bar" class="ctrl-options-bar hidden">
+        <button id="ctrl-toggle-hint" class="drawer-pill-btn" type="button">Aim Hint: Off</button>
+        <button id="ctrl-toggle-solution" class="drawer-pill-btn" type="button">Solution: Off</button>
+        <button id="ctrl-toggle-lab" class="drawer-pill-btn" type="button">Vectors: Off</button>
+        <button id="ctrl-toggle-theme" class="drawer-pill-btn" type="button">Theme: Modern</button>
+        <button id="btn-ctrl-exit" class="drawer-pill-btn drawer-pill-btn--danger" type="button">Disconnect</button>
+      </div>
+
+      <section class="ctrl-pad">
         <div class="ctrl-info-strip">
-          <span id="ctrl-location-chip" class="status-chip">Location</span>
-          <span id="ctrl-wind-chip" class="status-chip">Wind 0.0</span>
-          <span id="ctrl-tries-chip" class="status-chip status-chip--planet">Try 1 / 3</span>
+          <span id="ctrl-location-chip" class="chip">Location</span>
+          <span id="ctrl-wind-chip" class="chip">Calm</span>
+          <span id="ctrl-tries-chip" class="chip chip--accent">Try 1/3</span>
         </div>
 
-        <!-- Mirror Placement Card on Tablet Controller (toggled via + Mirror) -->
-        <div id="ctrl-mirror-card" class="ctrl-card ctrl-card--mirror hidden">
-          <div class="slider-header">
-            <span class="control-label">Position Mirror Live on TV</span>
-            <strong id="ctrl-mirror-readout" class="val-pill">-25°</strong>
+        <div id="ctrl-scores" class="panel-scores"></div>
+
+        <!-- Remote 3-Tab Switcher -->
+        <div id="ctrl-mode-tabs" class="mode-tabs" role="tablist" aria-label="Remote action mode">
+          <button type="button" role="tab" class="mode-tab active" data-ctrl-mode="throw" aria-selected="true">
+            <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <circle cx="12" cy="12" r="4" />
+            </svg>
+            <span>Throw</span>
+          </button>
+          <button type="button" role="tab" class="mode-tab" data-ctrl-mode="move" aria-selected="false">
+            <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12h14M9 8l-4 4 4 4M15 8l4 4-4 4" />
+            </svg>
+            <span>Move</span>
+          </button>
+          <button type="button" role="tab" class="mode-tab" data-ctrl-mode="mirror" aria-selected="false">
+            <svg class="ui-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="5" y1="19" x2="19" y2="5" stroke-width="2.6" />
+              <path d="M4 9l5 5 5-5" />
+            </svg>
+            <span>Mirror</span>
+            <span id="ctrl-mirror-badge" class="tab-badge">0/4</span>
+          </button>
+        </div>
+
+        <!-- Remote Throw Pane -->
+        <div id="ctrl-pane-throw" class="mode-pane">
+          <div class="throw-top-row">
+            <div class="dir-toggle" role="group" aria-label="Aim direction">
+              <button id="ctrl-dir-left" class="dir-btn" type="button">← Left</button>
+              <button id="ctrl-dir-right" class="dir-btn active" type="button">Right →</button>
+            </div>
+            <div id="ctrl-solution-pill" class="solution-pill hidden"></div>
           </div>
-          <div class="control-group">
-            <span class="control-label">Left ↔ Right (X)</span>
-            <div id="ctrl-slider-mx" class="touch-slider touch-slider--lg" role="slider" aria-label="Mirror X position">
+
+          <div class="slider-block">
+            <div class="slider-header">
+              <span class="control-label">Angle</span>
+              <div class="nudge-group">
+                <button class="nudge-btn ctrl-step-btn" type="button" data-ctrl-angle="-1">−</button>
+                <strong id="ctrl-angle-val" class="val-pill">45°</strong>
+                <button class="nudge-btn ctrl-step-btn" type="button" data-ctrl-angle="1">+</button>
+              </div>
+            </div>
+            <div id="ctrl-slider-angle" class="touch-slider touch-slider--lg" role="slider" aria-label="Controller angle" aria-valuemin="-30" aria-valuemax="89" aria-valuenow="45">
               <div class="touch-slider-track">
-                <div id="ctrl-slider-mx-fill" class="touch-slider-fill"></div>
-                <div id="ctrl-slider-mx-thumb" class="touch-slider-thumb"></div>
+                <div id="ctrl-slider-angle-fill" class="touch-slider-fill"></div>
+                <div id="ctrl-slider-angle-thumb" class="touch-slider-thumb"></div>
               </div>
             </div>
           </div>
-          <div class="control-group">
-            <span class="control-label">High ↕ Low (Y)</span>
-            <div id="ctrl-slider-my" class="touch-slider touch-slider--lg" role="slider" aria-label="Mirror Y position">
+
+          <div class="slider-block">
+            <div class="slider-header">
+              <span class="control-label">Speed</span>
+              <div class="nudge-group">
+                <button class="nudge-btn ctrl-step-btn" type="button" data-ctrl-speed="-1">−</button>
+                <strong id="ctrl-speed-val" class="val-pill">40 m/s</strong>
+                <button class="nudge-btn ctrl-step-btn" type="button" data-ctrl-speed="1">+</button>
+              </div>
+            </div>
+            <div id="ctrl-slider-speed" class="touch-slider touch-slider--lg" role="slider" aria-label="Controller speed" aria-valuemin="8" aria-valuemax="95" aria-valuenow="40">
               <div class="touch-slider-track">
-                <div id="ctrl-slider-my-fill" class="touch-slider-fill"></div>
-                <div id="ctrl-slider-my-thumb" class="touch-slider-thumb"></div>
+                <div id="ctrl-slider-speed-fill" class="touch-slider-fill"></div>
+                <div id="ctrl-slider-speed-thumb" class="touch-slider-thumb"></div>
               </div>
             </div>
           </div>
-          <div class="control-group">
-            <span class="control-label">Tilt Angle (-80° to +80°)</span>
-            <div id="ctrl-slider-mtilt" class="touch-slider touch-slider--lg" role="slider" aria-label="Mirror tilt">
-              <div class="touch-slider-track">
-                <div id="ctrl-slider-mtilt-fill" class="touch-slider-fill"></div>
-                <div id="ctrl-slider-mtilt-thumb" class="touch-slider-thumb"></div>
+
+          <button id="ctrl-btn-throw" class="throw-btn throw-btn--xl" type="button">THROW!</button>
+          <button id="ctrl-btn-rematch" class="throw-btn throw-btn--xl hidden" type="button">PLAY AGAIN</button>
+        </div>
+
+        <!-- Remote Move Pane -->
+        <div id="ctrl-pane-move" class="mode-pane hidden">
+          <div class="pane-status-row">
+            <strong id="ctrl-move-label">8 steps left</strong>
+            <span class="pane-hint">Drop down roofs · no climbing</span>
+          </div>
+          <div class="move-btn-grid">
+            <button id="ctrl-move-left" class="big-action-btn" type="button">← Walk Left</button>
+            <button id="ctrl-move-right" class="big-action-btn" type="button">Walk Right →</button>
+          </div>
+        </div>
+
+        <!-- Remote Mirror Pane -->
+        <div id="ctrl-pane-mirror" class="mode-pane hidden">
+          <div id="ctrl-mirror-idle" class="mirror-idle-box">
+            <button id="ctrl-btn-mirror" class="big-action-btn big-action-btn--mirror" type="button">+ Place Mirror on TV</button>
+          </div>
+          <div id="ctrl-mirror-card" class="mirror-draft-box hidden">
+            <div class="slider-block">
+              <div class="slider-header"><span class="control-label">Left ↔ Right</span></div>
+              <div id="ctrl-slider-mx" class="touch-slider touch-slider--lg" role="slider" aria-label="Mirror X">
+                <div class="touch-slider-track">
+                  <div id="ctrl-slider-mx-fill" class="touch-slider-fill"></div>
+                  <div id="ctrl-slider-mx-thumb" class="touch-slider-thumb"></div>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="ctrl-steppers">
-            <button class="ctrl-step-btn" type="button" data-ctrl-mtilt="-15">-15°</button>
-            <button class="ctrl-step-btn" type="button" data-ctrl-mtilt="-5">-5°</button>
-            <button class="ctrl-step-btn" type="button" data-ctrl-mtilt="5">+5°</button>
-            <button class="ctrl-step-btn" type="button" data-ctrl-mtilt="15">+15°</button>
-          </div>
-          <div class="ctrl-btn-pair">
-            <button id="ctrl-mirror-lock" class="primary-btn" type="button">Lock Mirror</button>
-            <button id="ctrl-mirror-cancel" class="secondary-btn" type="button">Cancel</button>
-          </div>
-        </div>
-
-        <div class="ctrl-row-two">
-          <div class="ctrl-card">
-            <span id="ctrl-move-label" class="control-label">Walk (8 left)</span>
-            <div class="ctrl-btn-pair">
-              <button id="ctrl-move-left" class="ctrl-big-btn" type="button">← Step</button>
-              <button id="ctrl-move-right" class="ctrl-big-btn" type="button">Step →</button>
+            <div class="slider-block">
+              <div class="slider-header"><span class="control-label">High ↕ Low</span></div>
+              <div id="ctrl-slider-my" class="touch-slider touch-slider--lg" role="slider" aria-label="Mirror Y">
+                <div class="touch-slider-track">
+                  <div id="ctrl-slider-my-fill" class="touch-slider-fill"></div>
+                  <div id="ctrl-slider-my-thumb" class="touch-slider-thumb"></div>
+                </div>
+              </div>
+            </div>
+            <div class="slider-block">
+              <div class="slider-header">
+                <span class="control-label">Tilt</span>
+                <div class="nudge-group">
+                  <button class="nudge-btn ctrl-step-btn" type="button" data-ctrl-mtilt="-5">−</button>
+                  <strong id="ctrl-mirror-readout" class="val-pill">-25°</strong>
+                  <button class="nudge-btn ctrl-step-btn" type="button" data-ctrl-mtilt="5">+</button>
+                </div>
+              </div>
+              <div id="ctrl-slider-mtilt" class="touch-slider touch-slider--lg" role="slider" aria-label="Mirror tilt">
+                <div class="touch-slider-track">
+                  <div id="ctrl-slider-mtilt-fill" class="touch-slider-fill"></div>
+                  <div id="ctrl-slider-mtilt-thumb" class="touch-slider-thumb"></div>
+                </div>
+              </div>
+            </div>
+            <div class="mirror-draft-actions">
+              <button id="ctrl-mirror-cancel" class="secondary-btn" type="button">Cancel</button>
+              <button id="ctrl-mirror-lock" class="primary-btn" type="button">Lock Mirror</button>
             </div>
           </div>
-          <div class="ctrl-card">
-            <span class="control-label">Aim Side</span>
-            <div class="ctrl-btn-pair">
-              <button id="ctrl-dir-left" class="ctrl-big-btn" type="button">← Left</button>
-              <button id="ctrl-dir-right" class="ctrl-big-btn active" type="button">Right →</button>
-            </div>
-          </div>
         </div>
-
-        <div class="ctrl-card">
-          <div class="slider-header">
-            <span class="control-label">Launch Angle (-30° to 89°)</span>
-            <strong id="ctrl-angle-val" class="val-pill val-pill--lg">45°</strong>
-          </div>
-          <div id="ctrl-slider-angle" class="touch-slider touch-slider--lg" role="slider" aria-label="Controller angle" aria-valuemin="-30" aria-valuemax="89" aria-valuenow="45">
-            <div class="touch-slider-track">
-              <div id="ctrl-slider-angle-fill" class="touch-slider-fill"></div>
-              <div id="ctrl-slider-angle-thumb" class="touch-slider-thumb"></div>
-            </div>
-          </div>
-          <div class="ctrl-steppers">
-            <button class="ctrl-step-btn" type="button" data-ctrl-angle="-5">-5°</button>
-            <button class="ctrl-step-btn" type="button" data-ctrl-angle="-1">-1°</button>
-            <button class="ctrl-step-btn" type="button" data-ctrl-angle="1">+1°</button>
-            <button class="ctrl-step-btn" type="button" data-ctrl-angle="5">+5°</button>
-          </div>
-        </div>
-
-        <div class="ctrl-card">
-          <div class="slider-header">
-            <span class="control-label">Throw Speed (8 to 95 m/s)</span>
-            <strong id="ctrl-speed-val" class="val-pill val-pill--lg">40 m/s</strong>
-          </div>
-          <div id="ctrl-slider-speed" class="touch-slider touch-slider--lg" role="slider" aria-label="Controller speed" aria-valuemin="8" aria-valuemax="95" aria-valuenow="40">
-            <div class="touch-slider-track">
-              <div id="ctrl-slider-speed-fill" class="touch-slider-fill"></div>
-              <div id="ctrl-slider-speed-thumb" class="touch-slider-thumb"></div>
-            </div>
-          </div>
-          <div class="ctrl-steppers">
-            <button class="ctrl-step-btn" type="button" data-ctrl-speed="-5">-5</button>
-            <button class="ctrl-step-btn" type="button" data-ctrl-speed="-1">-1</button>
-            <button class="ctrl-step-btn" type="button" data-ctrl-speed="1">+1</button>
-            <button class="ctrl-step-btn" type="button" data-ctrl-speed="5">+5</button>
-          </div>
-        </div>
-
-        <button id="ctrl-btn-throw" class="ctrl-throw-btn" type="button">
-          THROW BANANA!
-        </button>
-
-        <button id="ctrl-btn-rematch" class="ctrl-throw-btn hidden" type="button">
-          PLAY AGAIN ON TV!
-        </button>
-
-        <div class="ctrl-quick-toggles">
-          <button id="ctrl-btn-mirror" class="tool-btn tool-btn--tv" type="button">+ Place Mirror</button>
-          <button id="ctrl-toggle-hint" class="tool-btn" type="button">Aim Hint: Off</button>
-          <button id="ctrl-toggle-solution" class="tool-btn" type="button">Solution: Off</button>
-          <button id="ctrl-toggle-theme" class="tool-btn" type="button">Theme: Modern</button>
-        </div>
-
-        <div id="ctrl-scores" class="ctrl-scores"></div>
       </section>
     </div>
 
-    <!-- Setup Overlay with Visual Gorilla Portrait Picker! -->
+    <!-- Streamlined Setup Modal with Collapsible Per-Player Accordions -->
     <div id="setup-modal" class="modal-backdrop">
-      <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+      <div class="modal-card modal-card--setup" role="dialog" aria-modal="true" aria-labelledby="setup-title">
         <div class="modal-header">
-          <h2 id="setup-title">New Banana Arc Match</h2>
-          <p class="modal-subtitle">
-            15 iconic cities &amp; terrains (Chicago, Atlanta, NYC &amp; more), illustrated gorilla characters, player-placed Physics Lab Mirrors, and Jackbox TV + Tablet mode!
-          </p>
+          <h1 id="setup-title">Banana Arc</h1>
+          <p class="modal-subtitle">Pick your gorillas &amp; skyline to start</p>
         </div>
 
-        <div class="setup-grid">
+        <div class="setup-body">
+          <!-- Up Front 1: Player Count -->
           <div class="setup-field">
             <label class="field-label">Players</label>
             <div id="setup-player-count" class="segmented">
-              <button type="button" data-count="1" class="seg-btn">1 (vs Bot)</button>
-              <button type="button" data-count="2" class="seg-btn active">2 Players</button>
-              <button type="button" data-count="3" class="seg-btn">3 Players</button>
-              <button type="button" data-count="4" class="seg-btn">4 Players</button>
+              <button type="button" data-count="1" class="seg-btn">1 vs Bot</button>
+              <button type="button" data-count="2" class="seg-btn active">2</button>
+              <button type="button" data-count="3" class="seg-btn">3</button>
+              <button type="button" data-count="4" class="seg-btn">4</button>
             </div>
           </div>
 
-          <div class="setup-row-split">
-            <div class="setup-field">
-              <label class="field-label">Rounds</label>
-              <div id="setup-rounds" class="segmented">
-                <button type="button" data-rounds="3" class="seg-btn">3</button>
-                <button type="button" data-rounds="5" class="seg-btn active">5</button>
-                <button type="button" data-rounds="7" class="seg-btn">7</button>
+          <!-- Up Front 2: Collapsible Per-Player Accordion Cards -->
+          <div class="setup-field">
+            <label class="field-label">Gorillas <span class="field-hint">(tap a player to customize)</span></label>
+            <div id="setup-players" class="player-accordions"></div>
+          </div>
+
+          <!-- Up Front 3: Skyline / Location -->
+          <div class="setup-field">
+            <label for="setup-location-select" class="field-label">Location</label>
+            <select id="setup-location-select" class="select-input"></select>
+          </div>
+
+          <!-- Collapsed More Options Drawer -->
+          <details id="setup-more-options" class="more-options">
+            <summary class="more-options-summary">
+              <span>More Options</span>
+              <span class="more-summary-preview" id="more-options-preview">Earth · 5 rounds · 3 tries</span>
+              <svg class="ui-ico chevron-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </summary>
+
+            <div class="more-options-content">
+              <div class="setup-field">
+                <label class="field-label">Planet Gravity</label>
+                <div id="setup-planets" class="planet-grid"></div>
+              </div>
+
+              <div class="setup-row-split">
+                <div class="setup-field">
+                  <label class="field-label">Rounds</label>
+                  <div id="setup-rounds" class="segmented">
+                    <button type="button" data-rounds="3" class="seg-btn">3</button>
+                    <button type="button" data-rounds="5" class="seg-btn active">5</button>
+                    <button type="button" data-rounds="7" class="seg-btn">7</button>
+                  </div>
+                </div>
+
+                <div class="setup-field">
+                  <label class="field-label">Tries / Turn</label>
+                  <div id="setup-tries" class="segmented">
+                    <button type="button" data-tries="1" class="seg-btn">1</button>
+                    <button type="button" data-tries="3" class="seg-btn active">3</button>
+                    <button type="button" data-tries="4" class="seg-btn">4</button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="bot-skill-row" class="setup-field hidden">
+                <label class="field-label">Bot Skill</label>
+                <div id="setup-bot-skill" class="segmented">
+                  <button type="button" data-skill="easy" class="seg-btn active">Easy</button>
+                  <button type="button" data-skill="normal" class="seg-btn">Normal</button>
+                  <button type="button" data-skill="clever" class="seg-btn">Clever</button>
+                </div>
+              </div>
+
+              <div class="setup-toggles">
+                <label class="check-label">
+                  <input id="setup-mirrors-check" type="checkbox" checked />
+                  <span>Mirror Panels (place angled reflectors in the sky)</span>
+                </label>
+                <label class="check-label">
+                  <input id="setup-hint-check" type="checkbox" />
+                  <span>Aim Hint (short arc preview)</span>
+                </label>
+                <label class="check-label">
+                  <input id="setup-lab-check" type="checkbox" />
+                  <span>Physics Vectors (Vx / Vy arrows)</span>
+                </label>
+                <label class="check-label">
+                  <input id="setup-retro-check" type="checkbox" />
+                  <span>Retro '90s DOS Theme</span>
+                </label>
               </div>
             </div>
-
-            <div class="setup-field">
-              <label class="field-label">Tries per Turn</label>
-              <div id="setup-tries" class="segmented">
-                <button type="button" data-tries="1" class="seg-btn">1 Try</button>
-                <button type="button" data-tries="3" class="seg-btn active">3 Tries</button>
-                <button type="button" data-tries="4" class="seg-btn">4 Tries</button>
-              </div>
-            </div>
-          </div>
-
-          <div id="bot-skill-row" class="setup-field hidden">
-            <label class="field-label">Robo-Kong Skill</label>
-            <div id="setup-bot-skill" class="segmented">
-              <button type="button" data-skill="easy" class="seg-btn active">Easy</button>
-              <button type="button" data-skill="normal" class="seg-btn">Normal</button>
-              <button type="button" data-skill="clever" class="seg-btn">Clever</button>
-            </div>
-          </div>
-
-          <!-- Visual Player Slots + 8-Gorilla Avatar Gallery -->
-          <div class="setup-field">
-            <label class="field-label">1. Select a Player Slot &amp; Edit Name</label>
-            <div id="setup-names" class="names-grid"></div>
-          </div>
-
-          <div class="setup-field">
-            <label id="avatar-gallery-label" class="field-label">2. Pick Gorilla Avatar for Player 1</label>
-            <div id="setup-avatar-gallery" class="avatar-gallery"></div>
-          </div>
-
-          <div class="setup-row-split">
-            <div class="setup-field">
-              <label for="setup-location-select" class="field-label">Location / Skyline</label>
-              <select id="setup-location-select" class="select-input"></select>
-            </div>
-
-            <div class="setup-field">
-              <label class="field-label">Planet Gravity</label>
-              <div id="setup-planets" class="planet-grid"></div>
-            </div>
-          </div>
-
-          <div class="setup-field setup-toggles">
-            <label class="check-label">
-              <input id="setup-mirrors-check" type="checkbox" checked />
-              <span>Player-Placed Physics Lab Mirrors (1 per turn, shared all round up to 4)</span>
-            </label>
-            <label class="check-label">
-              <input id="setup-hint-check" type="checkbox" />
-              <span>Aim Hint (short arc preview for younger kids)</span>
-            </label>
-            <label class="check-label">
-              <input id="setup-lab-check" type="checkbox" checked />
-              <span>Physics Lab HUD (Vx / Vy vectors &amp; flight stats)</span>
-            </label>
-            <label class="check-label">
-              <input id="setup-retro-check" type="checkbox" />
-              <span>Start in Retro '90s DOS Theme</span>
-            </label>
-          </div>
+          </details>
         </div>
 
         <div class="modal-actions modal-actions--spread">
-          <button id="btn-setup-jackbox" class="secondary-btn" type="button">TV Host / Tablet Mode…</button>
+          <button id="btn-setup-remote" class="secondary-btn" type="button">TV &amp; Remote…</button>
           <button id="btn-start-match" class="primary-btn" type="button">Start Match!</button>
         </div>
       </div>
     </div>
 
-    <!-- Jackbox TV / Tablet Modal -->
-    <div id="jackbox-modal" class="modal-backdrop hidden">
-      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="jackbox-title">
+    <!-- TV & Remote Mode Modal -->
+    <div id="remote-modal" class="modal-backdrop hidden">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="remote-title">
         <div class="modal-header">
-          <h2 id="jackbox-title">Jackbox-Style TV + Tablet Mode</h2>
+          <h2 id="remote-title">TV &amp; Remote Mode</h2>
           <p class="modal-subtitle">
-            Cast this screen to your TV as the <strong>TV Host</strong>, then scan the QR code or enter the 4-letter code on a tablet or phone to pass around!
+            Display the skyline on a TV or laptop, then pass a phone or tablet around as the touchscreen controller.
           </p>
         </div>
 
-        <div class="jackbox-options">
-          <div class="jackbox-box">
-            <h3>1. On the TV (or Cast Laptop)</h3>
-            <p>Shows a clean full-size skyline with a 4-letter room code &amp; QR code.</p>
-            <div class="jackbox-row">
-              <button id="btn-start-tv-host" class="primary-btn" type="button">Start TV Host Mode</button>
-              <button id="btn-stop-tv-host" class="secondary-btn hidden" type="button">Stop TV Host</button>
+        <div class="remote-options">
+          <div class="remote-box">
+            <h3>1. On the TV Screen</h3>
+            <p>Full-screen skyline with a 4-letter Room Code &amp; QR code.</p>
+            <div class="remote-row">
+              <button id="btn-start-tv-host" class="primary-btn" type="button">Start TV Display</button>
+              <button id="btn-stop-tv-host" class="secondary-btn hidden" type="button">Stop TV Display</button>
             </div>
-            <p id="tv-host-status" class="jackbox-status"></p>
+            <p id="tv-host-status" class="remote-status"></p>
           </div>
 
-          <div class="jackbox-box">
-            <h3>2. On the Tablet or Phone</h3>
-            <p>Opens a big-button touchscreen controller (including live Mirror placement on the TV!).</p>
-            <div class="jackbox-join-row">
+          <div class="remote-box">
+            <h3>2. On a Phone or Tablet</h3>
+            <p>Scan the QR code on the TV or enter the 4-letter code below.</p>
+            <div class="remote-join-row">
               <input
                 id="input-room-code"
                 class="room-code-input"
@@ -487,13 +650,13 @@
                 autocapitalize="characters"
                 aria-label="4-letter room code"
               />
-              <button id="btn-join-controller" class="primary-btn" type="button">Join as Controller</button>
+              <button id="btn-join-controller" class="primary-btn" type="button">Join Remote</button>
             </div>
           </div>
         </div>
 
         <div class="modal-actions">
-          <button id="btn-close-jackbox" class="secondary-btn" type="button">Close</button>
+          <button id="btn-close-remote" class="secondary-btn" type="button">Close</button>
         </div>
       </div>
     </div>
@@ -509,13 +672,13 @@
         <div id="final-standings" class="standings-list"></div>
 
         <div id="awards-section" class="awards-section">
-          <h3 class="awards-heading">Silly Physics Awards</h3>
+          <h3 class="awards-heading">Match Awards</h3>
           <div id="awards-grid" class="awards-grid"></div>
         </div>
 
         <div class="modal-actions">
           <button id="btn-rematch" class="primary-btn" type="button">Play Again</button>
-          <button id="btn-change-setup" class="secondary-btn" type="button">Change Players / Location</button>
+          <button id="btn-change-setup" class="secondary-btn" type="button">Change Setup</button>
         </div>
       </div>
     </div>
