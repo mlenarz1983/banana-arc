@@ -445,6 +445,7 @@ export function renderCharacterAvatar(
 }
 
 export class GameRenderer {
+  private static readonly TERRAIN_DPR = 2;
   private terrainCanvas: HTMLCanvasElement;
   private terrainCtx: CanvasRenderingContext2D;
   private cachedTheme: ThemeMode | null = null;
@@ -453,8 +454,8 @@ export class GameRenderer {
 
   constructor() {
     this.terrainCanvas = document.createElement('canvas');
-    this.terrainCanvas.width = WORLD_WIDTH;
-    this.terrainCanvas.height = WORLD_HEIGHT;
+    this.terrainCanvas.width = WORLD_WIDTH * GameRenderer.TERRAIN_DPR;
+    this.terrainCanvas.height = WORLD_HEIGHT * GameRenderer.TERRAIN_DPR;
     const ctx = this.terrainCanvas.getContext('2d');
     if (!ctx) throw new Error('Could not initialize offscreen terrain canvas');
     this.terrainCtx = ctx;
@@ -474,6 +475,7 @@ export class GameRenderer {
     }
 
     const ctx = this.terrainCtx;
+    ctx.setTransform(GameRenderer.TERRAIN_DPR, 0, 0, GameRenderer.TERRAIN_DPR, 0, 0);
     ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
     const palette = theme === 'retro' ? RETRO_PALETTE : MODERN_PALETTE;
@@ -606,14 +608,14 @@ export class GameRenderer {
         ctx.fillStyle = 'rgba(0,0,0,0.22)';
         ctx.fillRect(shape.x + shape.width - 7, shape.y, 7, shape.height);
         if (style === 'bridge-tower') {
-          // Cross-braced Art Deco tower struts
-          ctx.fillStyle = 'rgba(255,255,255,0.2)';
-          ctx.fillRect(shape.x, shape.y + 18, shape.width, 6);
-          ctx.fillRect(shape.x, shape.y + 52, shape.width, 6);
-          ctx.fillRect(shape.x, shape.y + 88, shape.width, 6);
+          // Cross-braced Art Deco tower struts scaled to tower height
+          ctx.fillStyle = 'rgba(255,255,255,0.22)';
+          ctx.fillRect(shape.x, shape.y + shape.height * 0.14, shape.width, 4);
+          ctx.fillRect(shape.x, shape.y + shape.height * 0.36, shape.width, 4);
+          ctx.fillRect(shape.x, shape.y + shape.height * 0.58, shape.width, 4);
         } else {
           ctx.fillStyle = theme === 'retro' ? '#ffff55' : '#e2e8f0';
-          ctx.fillRect(shape.x, shape.y, shape.width, 4);
+          ctx.fillRect(shape.x, shape.y, shape.width, 3);
         }
         return;
       }
@@ -625,16 +627,16 @@ export class GameRenderer {
       }
 
       if (style === 'corncob') {
-        // Chicago Marina City scalloped cylindrical balcony rings!
+        // Chicago Marina City scalloped cylindrical balcony rings
         ctx.fillStyle = theme === 'retro' ? '#aaaaaa' : shape.accent ?? '#cbd5e1';
         ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
         ctx.fillStyle = 'rgba(15, 23, 42, 0.25)';
-        ctx.fillRect(shape.x + shape.width - 12, shape.y, 12, shape.height);
-        for (let y = shape.y + 10; y < WORLD_HEIGHT - 16; y += 13) {
+        ctx.fillRect(shape.x + shape.width - 10, shape.y, 10, shape.height);
+        for (let y = shape.y + 6; y < WORLD_HEIGHT - 8; y += 9) {
           ctx.fillStyle = theme === 'retro' ? '#444444' : '#334155';
-          ctx.fillRect(shape.x + 2, y, shape.width - 4, 5);
+          ctx.fillRect(shape.x + 2, y, shape.width - 4, 3.5);
           ctx.fillStyle = theme === 'retro' ? '#ffffff' : '#f1f5f9';
-          ctx.fillRect(shape.x, y + 5, shape.width, 3);
+          ctx.fillRect(shape.x, y + 3.5, shape.width, 2);
         }
         return;
       }
@@ -644,7 +646,6 @@ export class GameRenderer {
         const baseColor = theme === 'retro' ? '#00aaaa' : shape.accent ?? '#3b6e8c';
         ctx.fillStyle = baseColor;
         ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
-        // Subtle cylindrical sheen gradient
         if (theme === 'modern') {
           const g = ctx.createLinearGradient(shape.x, 0, shape.x + shape.width, 0);
           g.addColorStop(0, 'rgba(15,23,42,0.35)');
@@ -654,18 +655,20 @@ export class GameRenderer {
           ctx.fillStyle = g;
           ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
         }
-        // Vertical glass mullions + lit floor strips
         ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-        ctx.lineWidth = 1.4;
-        for (let vx = shape.x + 10; vx < shape.x + shape.width - 6; vx += 11) {
+        ctx.lineWidth = 1.2;
+        for (let vx = shape.x + 8; vx < shape.x + shape.width - 5; vx += 9) {
           ctx.beginPath();
           ctx.moveTo(vx, shape.y);
           ctx.lineTo(vx, WORLD_HEIGHT);
           ctx.stroke();
         }
-        for (let wy = shape.y + 16; wy < WORLD_HEIGHT - 12; wy += 18) {
-          ctx.fillStyle = hash2d(shape.windowSeed ?? 7, wy, 1) > 0.4 ? 'rgba(254, 240, 138, 0.52)' : 'rgba(15,23,42,0.22)';
-          ctx.fillRect(shape.x + 6, wy, shape.width - 12, 4);
+        for (let wy = shape.y + 10; wy < WORLD_HEIGHT - 8; wy += 11) {
+          ctx.fillStyle =
+            hash2d(shape.windowSeed ?? 7, wy, 1) > 0.4
+              ? 'rgba(254, 240, 138, 0.55)'
+              : 'rgba(15,23,42,0.24)';
+          ctx.fillRect(shape.x + 5, wy, shape.width - 10, 3);
         }
         return;
       }
@@ -675,22 +678,24 @@ export class GameRenderer {
       ctx.fillStyle = bodyCol;
       ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
 
-      const shadeW = theme === 'retro' ? 8 : Math.max(10, Math.floor(shape.width * 0.18));
+      const shadeW = theme === 'retro' ? 6 : Math.max(8, Math.floor(shape.width * 0.17));
       ctx.fillStyle = theme === 'retro' ? colors.shade : 'rgba(0, 0, 0, 0.22)';
       ctx.fillRect(shape.x + shape.width - shadeW, shape.y, shadeW, shape.height);
 
       ctx.fillStyle = style === 'gold-crown' ? '#fbbf24' : colors.trim;
-      ctx.fillRect(shape.x, shape.y, shape.width, style === 'gold-crown' ? 9 : theme === 'retro' ? 4 : 5);
+      ctx.fillRect(shape.x, shape.y, shape.width, style === 'gold-crown' ? 6 : theme === 'retro' ? 3 : 4);
 
       if (style === 'twin-crown') {
-        // Atlanta 191 Peachtree twin illuminated Gothic crowns!
+        // Atlanta 191 Peachtree twin illuminated Gothic crowns
+        const cw = Math.min(24, Math.max(14, Math.round(shape.width * 0.26)));
+        const ch = 8;
         ctx.fillStyle = '#fef08a';
-        ctx.fillRect(shape.x + 8, shape.y - 12, 26, 12);
-        ctx.fillRect(shape.x + shape.width - 34, shape.y - 12, 26, 12);
+        ctx.fillRect(shape.x + 7, shape.y - ch, cw, ch);
+        ctx.fillRect(shape.x + shape.width - cw - 7, shape.y - ch, cw, ch);
         ctx.strokeStyle = '#92400e';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(shape.x + 8, shape.y - 12, 26, 12);
-        ctx.strokeRect(shape.x + shape.width - 34, shape.y - 12, 26, 12);
+        ctx.lineWidth = 1.6;
+        ctx.strokeRect(shape.x + 7, shape.y - ch, cw, ch);
+        ctx.strokeRect(shape.x + shape.width - cw - 7, shape.y - ch, cw, ch);
       }
 
       if (theme === 'retro') {
@@ -699,20 +704,21 @@ export class GameRenderer {
         ctx.strokeRect(shape.x + 1, shape.y + 1, shape.width - 2, shape.height);
       }
 
-      if (shape.width >= 38 && shape.height >= 60) {
-        const cols = Math.max(2, Math.floor((shape.width - 18) / 18));
-        const rows = Math.max(3, Math.floor((shape.height - 24) / 22));
-        const usableW = shape.width - 22 - (theme === 'retro' ? 4 : 6);
+      if (shape.width >= 34 && shape.height >= 36) {
+        const cols = Math.max(2, Math.floor((shape.width - 14) / 14));
+        const rowStep = 12;
+        const rows = Math.max(2, Math.floor((shape.height - 14) / rowStep));
+        const usableW = shape.width - 18 - (theme === 'retro' ? 3 : 5);
         const colStep = usableW / cols;
-        const winW = Math.max(6, Math.floor(colStep * 0.52));
-        const winH = theme === 'retro' ? 9 : 11;
+        const winW = Math.max(5, Math.floor(colStep * 0.54));
+        const winH = theme === 'retro' ? 5 : 6;
         const seed = shape.windowSeed ?? shape.x * 7 + shape.height;
 
         for (let r = 0; r < rows; r++) {
-          const wy = shape.y + 16 + r * 21;
-          if (wy + winH > WORLD_HEIGHT - 10) break;
+          const wy = shape.y + 10 + r * rowStep;
+          if (wy + winH > WORLD_HEIGHT - 6) break;
           for (let c = 0; c < cols; c++) {
-            const wx = Math.round(shape.x + 11 + c * colStep + (colStep - winW) * 0.5);
+            const wx = Math.round(shape.x + 9 + c * colStep + (colStep - winW) * 0.5);
             const lit = hash2d(seed, c, r) > 0.38;
             ctx.fillStyle = lit ? colors.winLit : colors.winOff;
             ctx.fillRect(wx, wy, winW, winH);
@@ -722,26 +728,27 @@ export class GameRenderer {
 
       if (style === 'clock') {
         const cx = shape.x + shape.width / 2;
-        const cy = shape.y + 38;
+        const radius = Math.min(14, shape.width * 0.34, shape.height * 0.16);
+        const cy = shape.y + radius + 8;
         ctx.fillStyle = '#fef3c7';
         ctx.beginPath();
-        ctx.arc(cx, cy, 18, 0, Math.PI * 2);
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = '#92400e';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2.4;
         ctx.stroke();
         ctx.strokeStyle = '#1e293b';
-        ctx.lineWidth = 2.2;
+        ctx.lineWidth = 1.8;
         ctx.beginPath();
         ctx.moveTo(cx, cy);
-        ctx.lineTo(cx, cy - 11);
+        ctx.lineTo(cx, cy - radius * 0.62);
         ctx.moveTo(cx, cy);
-        ctx.lineTo(cx + 8, cy + 3);
+        ctx.lineTo(cx + radius * 0.45, cy + radius * 0.18);
         ctx.stroke();
       } else if (style === 'dome') {
         ctx.fillStyle = shape.accent ?? colors.trim;
         ctx.beginPath();
-        ctx.arc(shape.x + shape.width / 2, shape.y + 8, shape.width * 0.46, Math.PI, 0);
+        ctx.arc(shape.x + shape.width / 2, shape.y + 6, shape.width * 0.44, Math.PI, 0);
         ctx.fill();
       }
       return;
@@ -760,30 +767,47 @@ export class GameRenderer {
       const style = shape.style ?? 'landmark';
 
       if (style === 'xbrace-taper') {
-        // Chicago John Hancock Center — dark steel trapezoid + bold 5-tier diagonal X-bracing!
+        // Chicago John Hancock Center — dark steel trapezoid + 5-tier diagonal X-bracing scaled to actual bounds
+        let minX = WORLD_WIDTH,
+          maxX = 0,
+          minY = WORLD_HEIGHT,
+          maxY = 0;
+        for (const p of shape.points) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
+        const topPts = shape.points.filter((p) => Math.abs(p.y - minY) < 4);
+        const topLeftX = topPts.length >= 2 ? Math.min(...topPts.map((p) => p.x)) : minX + 14;
+        const topRightX = topPts.length >= 2 ? Math.max(...topPts.map((p) => p.x)) : maxX - 14;
+
         ctx.fillStyle = theme === 'retro' ? '#222222' : shape.accent ?? '#1e242b';
         ctx.fill();
         ctx.clip();
-        // Subtle lit office rows
-        for (let y = WORLD_HEIGHT - 310; y < WORLD_HEIGHT - 16; y += 16) {
-          ctx.fillStyle = hash2d(875, y, 2) > 0.3 ? 'rgba(254, 240, 138, 0.45)' : 'rgba(15,23,42,0.4)';
-          ctx.fillRect(110, y, 130, 4);
+
+        for (let y = minY + 8; y < maxY - 8; y += 10) {
+          ctx.fillStyle =
+            hash2d(875, Math.round(y), 2) > 0.3
+              ? 'rgba(254, 240, 138, 0.48)'
+              : 'rgba(15,23,42,0.4)';
+          ctx.fillRect(minX, y, maxX - minX, 3);
         }
-        // Iconic 5-tier X-bracing
+
         ctx.strokeStyle = theme === 'retro' ? '#55ffff' : '#94a3b8';
-        ctx.lineWidth = 3.2;
+        ctx.lineWidth = 2.4;
         const tiers = 5;
-        const topY = WORLD_HEIGHT - 325;
-        const tierH = 325 / tiers;
+        const spanY = Math.max(20, maxY - minY);
+        const tierH = spanY / tiers;
         for (let t = 0; t < tiers; t++) {
-          const y1 = topY + t * tierH;
+          const y1 = minY + t * tierH;
           const y2 = y1 + tierH;
           const f1 = t / tiers;
           const f2 = (t + 1) / tiers;
-          const xl1 = 140 - f1 * 18;
-          const xr1 = 214 + f1 * 18;
-          const xl2 = 140 - f2 * 18;
-          const xr2 = 214 + f2 * 18;
+          const xl1 = topLeftX + (minX - topLeftX) * f1;
+          const xr1 = topRightX + (maxX - topRightX) * f1;
+          const xl2 = topLeftX + (minX - topLeftX) * f2;
+          const xr2 = topRightX + (maxX - topRightX) * f2;
           ctx.beginPath();
           ctx.moveTo(xl1, y1);
           ctx.lineTo(xr2, y2);
@@ -794,16 +818,16 @@ export class GameRenderer {
           ctx.stroke();
         }
       } else if (style === 'gold-lattice') {
-        // Atlanta Bank of America Plaza & One Atlantic Center glowing gilded open-lattice spire!
+        // Atlanta Bank of America Plaza & One Atlantic Center glowing gilded open-lattice spire
         ctx.fillStyle = theme === 'retro' ? '#aa7700' : 'rgba(251, 191, 36, 0.36)';
         ctx.fill();
         ctx.strokeStyle = theme === 'retro' ? '#ffff55' : shape.accent ?? '#fbbf24';
-        ctx.lineWidth = 2.6;
+        ctx.lineWidth = 2.2;
         ctx.stroke();
         ctx.clip();
         const [p0, apex, p2] = shape.points;
-        for (let k = 1; k <= 5; k++) {
-          const f = k / 6;
+        for (let k = 1; k <= 4; k++) {
+          const f = k / 5;
           const ly = p0.y + (apex.y - p0.y) * f;
           ctx.beginPath();
           ctx.moveTo(p0.x, ly);
@@ -811,7 +835,7 @@ export class GameRenderer {
           ctx.stroke();
         }
       } else if (style === 'eiffel-lattice') {
-        // Paris Eiffel Tower & Tokyo Tower crisp open truss lattice!
+        // Paris Eiffel Tower & Tokyo Tower crisp open truss lattice
         ctx.fillStyle = theme === 'retro' ? '#aa5500' : shape.accent ?? '#8c6248';
         ctx.fill();
         ctx.clip();
@@ -825,27 +849,26 @@ export class GameRenderer {
           if (p.x < minX) minX = p.x;
           if (p.x > maxX) maxX = p.x;
         }
+        const step = Math.max(12, (maxY - minY) / 7);
         ctx.strokeStyle = theme === 'retro' ? '#ffff55' : 'rgba(255,255,255,0.45)';
-        ctx.lineWidth = 2;
-        for (let y = minY; y < maxY; y += 26) {
+        ctx.lineWidth = 1.6;
+        for (let y = minY; y < maxY; y += step) {
           ctx.beginPath();
           ctx.moveTo(minX, y);
-          ctx.lineTo(maxX, y + 26);
+          ctx.lineTo(maxX, y + step);
           ctx.moveTo(maxX, y);
-          ctx.lineTo(minX, y + 26);
+          ctx.lineTo(minX, y + step);
           ctx.stroke();
         }
-        // Observation deck bands
-        ctx.fillStyle = theme === 'retro' ? '#ffffff' : 'rgba(255, 255, 255, 0.55)';
-        ctx.fillRect(minX, minY + (maxY - minY) * 0.45, maxX - minX, 7);
-        ctx.fillRect(minX, minY + (maxY - minY) * 0.78, maxX - minX, 9);
+        ctx.fillStyle = theme === 'retro' ? '#ffffff' : 'rgba(255, 255, 255, 0.6)';
+        ctx.fillRect(minX, minY + (maxY - minY) * 0.45, maxX - minX, 4);
+        ctx.fillRect(minX, minY + (maxY - minY) * 0.78, maxX - minX, 5);
       } else if (style === 'diamond-roof' || style === 'shard' || style === 'transamerica') {
         ctx.fillStyle = theme === 'retro' ? '#cccccc' : shape.accent ?? '#e2e8f0';
         ctx.fill();
         ctx.strokeStyle = theme === 'retro' ? '#000000' : 'rgba(30, 41, 59, 0.45)';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1.8;
         ctx.stroke();
-        // Reflective center facet highlight
         if (shape.points.length >= 3) {
           ctx.fillStyle = 'rgba(255,255,255,0.34)';
           ctx.beginPath();
@@ -856,17 +879,27 @@ export class GameRenderer {
           ctx.fill();
         }
       } else if (style === 'gherkin') {
+        let minX = WORLD_WIDTH,
+          maxX = 0,
+          minY = WORLD_HEIGHT,
+          maxY = 0;
+        for (const p of shape.points) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
         ctx.fillStyle = theme === 'retro' ? '#00aaaa' : shape.accent ?? '#2c5e63';
         ctx.fill();
         ctx.clip();
-        ctx.strokeStyle = 'rgba(186, 230, 253, 0.45)';
-        ctx.lineWidth = 1.8;
-        for (let y = WORLD_HEIGHT - 300; y < WORLD_HEIGHT + 80; y += 22) {
+        ctx.strokeStyle = 'rgba(186, 230, 253, 0.48)';
+        ctx.lineWidth = 1.4;
+        for (let y = minY - 30; y < maxY + 30; y += 14) {
           ctx.beginPath();
-          ctx.moveTo(295, y);
-          ctx.lineTo(400, y + 60);
-          ctx.moveTo(400, y);
-          ctx.lineTo(295, y + 60);
+          ctx.moveTo(minX - 6, y);
+          ctx.lineTo(maxX + 6, y + 34);
+          ctx.moveTo(maxX + 6, y);
+          ctx.lineTo(minX - 6, y + 34);
           ctx.stroke();
         }
       } else if (style === 'pyramid') {
@@ -1011,39 +1044,39 @@ export class GameRenderer {
     // 3. Classic Sun
     this.drawSun(ctx, state.theme, state.sunShocked, state.timeSec);
 
-    // 4. Wind indicator under sun
-    this.drawWindBanner(ctx, state.theme, state.windAccel);
+    // 4. Subtle pure-vector wind arrow under sun (no text box in sky)
+    this.drawWindVane(ctx, state.theme, state.windAccel);
 
     // 5. Bridge suspension cables (behind/integrated with terrain)
     if (state.terrain.location.cables) {
       this.drawBridgeCables(ctx, state.terrain.location.cables, state.theme);
     }
 
-    // 6. Destructible terrain layer + blinking aviation beacons
+    // 6. High-DPI destructible terrain layer + blinking aviation beacons
     this.ensureTerrainLayer(state.terrain, state.theme);
-    ctx.drawImage(this.terrainCanvas, 0, 0);
+    ctx.drawImage(this.terrainCanvas, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.drawSpireBeacons(ctx, state.terrain, state.timeSec);
 
-    // 7. Player-Placed Physics Lab Mirror Panels (locked + live draft!)
+    // 7. Player-Placed Mirror Panels (locked + live draft)
     this.drawMirrors(ctx, state.mirrors, state.draftMirror, state.theme, state.timeSec);
 
-    // 8. Ghost trail of active player's previous shot
+    // 8. Ghost trail of active player's previous shot (pure dashed curve)
     const activePlayer = state.players[state.activePlayerIndex];
     if (activePlayer?.lastShot && activePlayer.lastShot.points.length > 1) {
       this.drawGhostTrail(ctx, activePlayer, state.theme);
     }
 
-    // 9. Verified Solution overlay (when toggled On)
+    // 9. Verified Solution curve (when toggled On)
     if (state.showAimingGuides && state.showSolution && activePlayer && !activePlayer.isBot) {
       this.drawSolutionOverlay(ctx, state);
     }
 
-    // 10. Aiming guides (vector, Vx/Vy, optional aim hint with mirror reflection preview!)
+    // 10. Aiming guides (vector, optional Vx/Vy arrows, optional aim hint with mirror bounce preview)
     if (state.showAimingGuides && activePlayer && !activePlayer.isBot) {
       this.drawAimingGuides(ctx, activePlayer, state);
     }
 
-    // 11. Bigger TV-Readable Gorillas!
+    // 11. TV-Readable Gorillas
     for (let i = 0; i < state.players.length; i++) {
       const p = state.players[i];
       const isActive = i === state.activePlayerIndex;
@@ -1055,12 +1088,9 @@ export class GameRenderer {
       this.drawBanana(ctx, state.banana, state.theme);
     }
 
-    // 13. Particles & floating callouts
+    // 13. Particles & brief impact callouts
     this.drawParticles(ctx, state.particles);
     this.drawFloatingTexts(ctx, state.floatingTexts, state.theme);
-
-    // 14. Postcard Location Badge (bottom-left)
-    this.drawLocationBadge(ctx, state.terrain, state.theme);
 
     ctx.restore();
   }
@@ -1081,10 +1111,10 @@ export class GameRenderer {
       ctx.translate(m.x, m.y);
 
       if (isDraft) {
-        // Subtle drag handle halo + tilt readout
+        // Pulsing circular drag handle halo (no floating text over sky)
         const pulse = 1 + Math.sin(timeSec * 6) * 0.05;
-        ctx.strokeStyle = theme === 'retro' ? '#ffff55' : 'rgba(56, 189, 248, 0.85)';
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = theme === 'retro' ? '#ffff55' : 'rgba(56, 189, 248, 0.9)';
+        ctx.lineWidth = 2.2;
         ctx.setLineDash([5, 5]);
         ctx.beginPath();
         ctx.arc(0, 0, (m.halfLength + 12) * pulse, 0, Math.PI * 2);
@@ -1094,10 +1124,10 @@ export class GameRenderer {
 
       ctx.rotate(-degToRad(m.angleDeg)); // canvas Y-down
 
-      // Subtle perpendicular normal line (visualizes θ_i = θ_r physics axis!)
+      // Subtle perpendicular normal line (visualizes θ_i = θ_r reflection axis)
       ctx.strokeStyle = isDraft
-        ? 'rgba(254, 240, 138, 0.75)'
-        : 'rgba(186, 230, 253, 0.42)';
+        ? 'rgba(254, 240, 138, 0.8)'
+        : 'rgba(186, 230, 253, 0.45)';
       ctx.lineWidth = 1.6;
       ctx.setLineDash([3, 4]);
       ctx.beginPath();
@@ -1112,7 +1142,7 @@ export class GameRenderer {
       this.roundRect(ctx, -m.halfLength - 3, -7, len + 6, 14, theme === 'retro' ? 0 : 7);
       ctx.fill();
 
-      // Glowing mirror glass face (double-sided reflective!)
+      // Glowing mirror glass face (double-sided reflective)
       const grad = ctx.createLinearGradient(-m.halfLength, -5, m.halfLength, 5);
       if (flash > 0.1) {
         grad.addColorStop(0, '#ffffff');
@@ -1140,21 +1170,6 @@ export class GameRenderer {
       ctx.fill();
 
       ctx.restore();
-
-      if (isDraft) {
-        ctx.save();
-        ctx.font = theme === 'retro' ? 'bold 11px "Courier New", monospace' : '700 11px system-ui, sans-serif';
-        const txt = `MIRROR ${m.angleDeg >= 0 ? '+' : ''}${m.angleDeg}° · DRAG TO PLACE`;
-        const w = ctx.measureText(txt).width + 16;
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-        this.roundRect(ctx, m.x - w / 2, m.y - 44, w, 20, theme === 'retro' ? 0 : 10);
-        ctx.fill();
-        ctx.fillStyle = '#bae6fd';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(txt, m.x, m.y - 34);
-        ctx.restore();
-      }
     }
   }
 
@@ -1177,7 +1192,7 @@ export class GameRenderer {
         for (let i = 0; i < 42; i++) {
           ctx.fillRect(
             Math.floor(hash2d(101, i, 1) * WORLD_WIDTH),
-            Math.floor(hash2d(101, i, 2) * (WORLD_HEIGHT * 0.65)),
+            Math.floor(hash2d(101, i, 2) * (WORLD_HEIGHT * 0.68)),
             3,
             3,
           );
@@ -1234,7 +1249,7 @@ export class GameRenderer {
     // Stars
     if (planetId === 'moon' || planetId === 'earth') {
       const starCount = planetId === 'moon' ? 75 : 22;
-      const maxY = planetId === 'moon' ? WORLD_HEIGHT * 0.72 : WORLD_HEIGHT * 0.32;
+      const maxY = planetId === 'moon' ? WORLD_HEIGHT * 0.72 : WORLD_HEIGHT * 0.34;
       for (let i = 0; i < starCount; i++) {
         const sx = hash2d(99, i, 1) * WORLD_WIDTH;
         const sy = hash2d(99, i, 2) * maxY;
@@ -1246,49 +1261,49 @@ export class GameRenderer {
       }
     }
 
-    // Distant mid-ground city silhouette layer for rich atmospheric depth!
+    // Distant mid-ground silhouette scaled cleanly behind the 25% foreground skylines
     const bd = terrain.location.backdrop;
     if (bd === 'city-depth' || bd === 'lake-michigan' || bd === 'bay-water') {
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.22)';
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.2)';
       for (let i = 0; i < 24; i++) {
         const bx = i * 52 - 8;
-        const bh = 120 + hash2d(313 + terrain.location.id.length, i, 2) * 165;
+        const bh = 52 + hash2d(313 + terrain.location.id.length, i, 2) * 72;
         ctx.fillRect(bx, WORLD_HEIGHT - bh, 46, bh);
       }
     }
 
     if (bd === 'mt-fuji' || bd === 'mt-rainier') {
       ctx.save();
-      ctx.fillStyle = 'rgba(30, 58, 95, 0.34)';
+      ctx.fillStyle = 'rgba(30, 58, 95, 0.32)';
       ctx.beginPath();
-      ctx.moveTo(240, WORLD_HEIGHT);
-      ctx.lineTo(600, 220);
-      ctx.lineTo(960, WORLD_HEIGHT);
+      ctx.moveTo(280, WORLD_HEIGHT);
+      ctx.lineTo(600, WORLD_HEIGHT - 235);
+      ctx.lineTo(920, WORLD_HEIGHT);
       ctx.closePath();
       ctx.fill();
       ctx.fillStyle = 'rgba(255, 255, 255, 0.52)';
       ctx.beginPath();
-      ctx.moveTo(516, 330);
-      ctx.lineTo(600, 220);
-      ctx.lineTo(684, 330);
+      ctx.moveTo(528, WORLD_HEIGHT - 182);
+      ctx.lineTo(600, WORLD_HEIGHT - 235);
+      ctx.lineTo(672, WORLD_HEIGHT - 182);
       ctx.closePath();
       ctx.fill();
       ctx.restore();
     } else if (bd === 'lava-glow') {
-      const lava = ctx.createRadialGradient(600, WORLD_HEIGHT - 160, 20, 600, WORLD_HEIGHT - 160, 320);
-      lava.addColorStop(0, 'rgba(251, 146, 60, 0.55)');
+      const lava = ctx.createRadialGradient(600, WORLD_HEIGHT - 85, 16, 600, WORLD_HEIGHT - 85, 220);
+      lava.addColorStop(0, 'rgba(251, 146, 60, 0.52)');
       lava.addColorStop(1, 'rgba(251, 146, 60, 0)');
       ctx.fillStyle = lava;
       ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     } else if (bd === 'alpine-peaks') {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
       ctx.beginPath();
       ctx.moveTo(0, WORLD_HEIGHT);
-      ctx.lineTo(190, 275);
+      ctx.lineTo(190, WORLD_HEIGHT - 210);
       ctx.lineTo(390, WORLD_HEIGHT);
-      ctx.lineTo(610, 235);
+      ctx.lineTo(610, WORLD_HEIGHT - 230);
       ctx.lineTo(860, WORLD_HEIGHT);
-      ctx.lineTo(1060, 285);
+      ctx.lineTo(1060, WORLD_HEIGHT - 205);
       ctx.lineTo(WORLD_WIDTH, WORLD_HEIGHT);
       ctx.fill();
     }
@@ -1433,84 +1448,29 @@ export class GameRenderer {
     ctx.restore();
   }
 
-  private drawWindBanner(ctx: CanvasRenderingContext2D, theme: ThemeMode, windAccel: number): void {
-    const cx = SUN_X;
-    const cy = SUN_Y + SUN_RADIUS + 26;
+  private drawWindVane(ctx: CanvasRenderingContext2D, theme: ThemeMode, windAccel: number): void {
     const absWind = Math.abs(windAccel);
+    if (absWind < 0.25) return;
+
+    const cx = SUN_X;
+    const barY = SUN_Y + SUN_RADIUS + 20;
+    const barLen = Math.min(86, Math.max(24, absWind * 22));
+    const dir = Math.sign(windAccel);
+    const startX = cx - (barLen * dir) / 2;
+    const tipX = cx + (barLen * dir) / 2;
 
     ctx.save();
-    ctx.font = theme === 'retro' ? 'bold 13px "Courier New", monospace' : '600 13px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    const label =
-      absWind < 0.25
-        ? 'CALM AIR'
-        : `WIND ${windAccel > 0 ? '→' : '←'} ${absWind.toFixed(1)} m/s²`;
-
-    const pillW = Math.max(126, ctx.measureText(label).width + 26);
-    const pillH = 24;
-
-    if (theme === 'retro') {
-      ctx.fillStyle = '#000055';
-      ctx.fillRect(cx - pillW / 2, cy - pillH / 2, pillW, pillH);
-      ctx.strokeStyle = '#55ffff';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(cx - pillW / 2, cy - pillH / 2, pillW, pillH);
-      ctx.fillStyle = '#ffff55';
-      ctx.fillText(label, cx, cy + 1);
-    } else {
-      ctx.fillStyle = 'rgba(17, 24, 39, 0.58)';
-      this.roundRect(ctx, cx - pillW / 2, cy - pillH / 2, pillW, pillH, 12);
-      ctx.fill();
-      ctx.fillStyle = '#fef3c7';
-      ctx.fillText(label, cx, cy);
-    }
-
-    if (absWind >= 0.25) {
-      const barY = cy + 18;
-      const barLen = Math.min(82, absWind * 22);
-      const dir = Math.sign(windAccel);
-      const tipX = cx + (barLen * dir) / 2;
-      ctx.strokeStyle = theme === 'retro' ? '#ff5555' : '#fde68a';
-      ctx.lineWidth = 3;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(cx - (barLen * dir) / 2, barY);
-      ctx.lineTo(tipX, barY);
-      ctx.moveTo(tipX, barY);
-      ctx.lineTo(tipX - 8 * dir, barY - 5);
-      ctx.moveTo(tipX, barY);
-      ctx.lineTo(tipX - 8 * dir, barY + 5);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  private drawLocationBadge(
-    ctx: CanvasRenderingContext2D,
-    terrain: SkylineTerrain,
-    theme: ThemeMode,
-  ): void {
-    const loc = terrain.location;
-    const text = `${loc.name} · ${loc.region}`;
-    ctx.save();
-    ctx.font = theme === 'retro' ? 'bold 12px "Courier New", monospace' : '700 12px system-ui, sans-serif';
-    const w = ctx.measureText(text).width + 20;
-    const x = 14;
-    const y = WORLD_HEIGHT - 36;
-    ctx.fillStyle = theme === 'retro' ? '#000055' : 'rgba(15, 23, 42, 0.76)';
-    this.roundRect(ctx, x, y, w, 24, theme === 'retro' ? 0 : 12);
-    ctx.fill();
-    if (theme === 'retro') {
-      ctx.strokeStyle = '#55ffff';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-    ctx.fillStyle = theme === 'retro' ? '#ffff55' : '#f8fafc';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, x + 10, y + 12);
+    ctx.strokeStyle = theme === 'retro' ? '#ff5555' : 'rgba(254, 240, 138, 0.9)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(startX, barY);
+    ctx.lineTo(tipX, barY);
+    ctx.moveTo(tipX, barY);
+    ctx.lineTo(tipX - 8 * dir, barY - 5);
+    ctx.moveTo(tipX, barY);
+    ctx.lineTo(tipX - 8 * dir, barY + 5);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1519,7 +1479,7 @@ export class GameRenderer {
     if (!shot || shot.points.length < 2) return;
 
     ctx.save();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.48)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.44)';
     ctx.lineWidth = theme === 'retro' ? 2 : 2.2;
     ctx.setLineDash([5, 7]);
     ctx.beginPath();
@@ -1529,50 +1489,14 @@ export class GameRenderer {
     }
     ctx.stroke();
     ctx.setLineDash([]);
-
-    let peakPt = shot.points[0];
-    for (const pt of shot.points) {
-      if (pt.y < peakPt.y && pt.y > 26 && pt.x > 60 && pt.x < WORLD_WIDTH - 60) {
-        peakPt = pt;
-      }
-    }
-    if (peakPt) {
-      const arrow = shot.direction > 0 ? '→' : '←';
-      const txt = `Last: ${shot.angleDeg}° · ${shot.speed} m/s ${arrow}`;
-      ctx.font = theme === 'retro' ? '11px "Courier New", monospace' : '600 11px system-ui, sans-serif';
-      const w = ctx.measureText(txt).width + 14;
-      const lx = Math.max(w / 2 + 8, Math.min(WORLD_WIDTH - w / 2 - 8, peakPt.x));
-      const ly = Math.max(22, peakPt.y - 14);
-      ctx.fillStyle = theme === 'retro' ? 'rgba(0,0,0,0.75)' : 'rgba(15, 23, 42, 0.62)';
-      this.roundRect(ctx, lx - w / 2, ly - 10, w, 20, theme === 'retro' ? 0 : 10);
-      ctx.fill();
-      ctx.fillStyle = '#f8fafc';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(txt, lx, ly);
-    }
     ctx.restore();
   }
 
   private drawSolutionOverlay(ctx: CanvasRenderingContext2D, state: RenderState): void {
     const sol = state.verifiedSolution;
+    if (!sol || sol.points.length < 2) return;
     const theme = state.theme;
     ctx.save();
-
-    if (!sol || sol.points.length < 2) {
-      const msg = 'No direct arc here — walk left/right or place an angled Mirror!';
-      ctx.font = theme === 'retro' ? 'bold 12px "Courier New", monospace' : '700 12px system-ui, sans-serif';
-      const w = ctx.measureText(msg).width + 20;
-      ctx.fillStyle = theme === 'retro' ? '#550000' : 'rgba(127, 29, 29, 0.85)';
-      this.roundRect(ctx, WORLD_WIDTH / 2 - w / 2, 175, w, 26, theme === 'retro' ? 0 : 12);
-      ctx.fill();
-      ctx.fillStyle = '#fecaca';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(msg, WORLD_WIDTH / 2, 188);
-      ctx.restore();
-      return;
-    }
 
     const lineColor = theme === 'retro' ? '#55ff55' : '#34d399';
     ctx.strokeStyle = lineColor;
@@ -1593,32 +1517,6 @@ export class GameRenderer {
     ctx.beginPath();
     ctx.arc(last.x, last.y, 22 * pulse, 0, Math.PI * 2);
     ctx.stroke();
-
-    let labelPt = sol.points[Math.floor(sol.points.length / 2)];
-    for (const pt of sol.points) {
-      if (pt.y < labelPt.y && pt.y > 42 && pt.x > 110 && pt.x < WORLD_WIDTH - 110) {
-        labelPt = pt;
-      }
-    }
-    const dirLabel = sol.direction > 0 ? 'Right →' : '← Left';
-    const bankTag = sol.bounces > 0 ? ' [Mirror Bank!]' : '';
-    const text = `Solution: ${sol.angleDeg}° · ${sol.speed} m/s (${dirLabel})${bankTag}`;
-    ctx.font = theme === 'retro' ? 'bold 12px "Courier New", monospace' : '700 12px system-ui, sans-serif';
-    const w = ctx.measureText(text).width + 20;
-    const lx = Math.max(w / 2 + 12, Math.min(WORLD_WIDTH - w / 2 - 12, labelPt.x));
-    const ly = Math.max(36, Math.min(WORLD_HEIGHT - 120, labelPt.y - 16));
-
-    ctx.fillStyle = theme === 'retro' ? '#003300' : 'rgba(6, 78, 59, 0.88)';
-    this.roundRect(ctx, lx - w / 2, ly - 13, w, 26, theme === 'retro' ? 0 : 12);
-    ctx.fill();
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = 1.6;
-    ctx.stroke();
-
-    ctx.fillStyle = '#ecfdf5';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, lx, ly);
     ctx.restore();
   }
 
@@ -1634,7 +1532,6 @@ export class GameRenderer {
 
     ctx.save();
 
-    // Show longer Aim Hint (or preview bounce when actively positioning a draft mirror!)
     if (state.showAimHint || draftMirror) {
       const hintDuration = draftMirror ? 2.2 : gravity < 3 ? 1.55 : gravity < 6 ? 1.15 : 0.95;
       const pts = sampleTrajectory(
@@ -1667,7 +1564,11 @@ export class GameRenderer {
     const endY = origin.y - vy * scale;
 
     if (state.showPhysicsLab) {
-      ctx.strokeStyle = theme === 'retro' ? '#55ffff' : '#38bdf8';
+      // Visual-only Vx (cyan) and Vy (orange) component arrows — no floating text clutter
+      const vxColor = theme === 'retro' ? '#55ffff' : '#38bdf8';
+      const vyColor = theme === 'retro' ? '#ff5555' : '#fb923c';
+
+      ctx.strokeStyle = vxColor;
       ctx.lineWidth = 2.4;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -1675,21 +1576,34 @@ export class GameRenderer {
       ctx.lineTo(endX, origin.y);
       ctx.stroke();
 
-      ctx.strokeStyle = theme === 'retro' ? '#ff5555' : '#fb923c';
+      ctx.strokeStyle = vyColor;
       ctx.beginPath();
       ctx.moveTo(endX, origin.y);
       ctx.lineTo(endX, endY);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      ctx.font = theme === 'retro' ? 'bold 11px "Courier New", monospace' : '700 11px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = theme === 'retro' ? '#55ffff' : '#bae6fd';
-      ctx.fillText(`Vx ${vx >= 0 ? '+' : ''}${vx.toFixed(1)}`, (origin.x + endX) / 2, origin.y + 14);
-
-      ctx.fillStyle = theme === 'retro' ? '#ff7777' : '#fed7aa';
-      ctx.textAlign = aimDirection > 0 ? 'left' : 'right';
-      ctx.fillText(`Vy ${vy >= 0 ? '+' : ''}${vy.toFixed(1)}`, endX + aimDirection * 8, (origin.y + endY) / 2);
+      // Small arrowheads for Vx and Vy
+      if (Math.abs(endX - origin.x) > 10) {
+        const dx = Math.sign(endX - origin.x);
+        ctx.fillStyle = vxColor;
+        ctx.beginPath();
+        ctx.moveTo(endX, origin.y);
+        ctx.lineTo(endX - 7 * dx, origin.y - 4);
+        ctx.lineTo(endX - 7 * dx, origin.y + 4);
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (Math.abs(endY - origin.y) > 10) {
+        const dy = Math.sign(endY - origin.y);
+        ctx.fillStyle = vyColor;
+        ctx.beginPath();
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(endX - 4, endY - 7 * dy);
+        ctx.lineTo(endX + 4, endY - 7 * dy);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
 
     ctx.strokeStyle = theme === 'retro' ? '#ffff55' : '#fef08a';
@@ -1728,41 +1642,35 @@ export class GameRenderer {
     ctx.save();
     ctx.translate(p.x, p.y - bounce);
 
-    // Draw scaled-up TV-readable gorilla character!
     ctx.save();
     ctx.scale(GORILLA_SCALE, GORILLA_SCALE);
     drawGorillaCharacter(ctx, p.characterId, p.animation, theme, timeSec);
     ctx.restore();
 
-    const labelY = -90;
+    // Compact active pointer & minimal name pill tucked right above the gorilla
+    const labelY = -84;
     if (isActive) {
-      const bob = Math.sin(timeSec * 6) * 3.5;
+      const bob = Math.sin(timeSec * 6) * 3;
       ctx.fillStyle = theme === 'retro' ? '#ffff55' : '#fde047';
       ctx.beginPath();
-      ctx.moveTo(0, labelY - 13 + bob);
-      ctx.lineTo(-8, labelY - 25 + bob);
-      ctx.lineTo(8, labelY - 25 + bob);
+      ctx.moveTo(0, labelY - 11 + bob);
+      ctx.lineTo(-7, labelY - 21 + bob);
+      ctx.lineTo(7, labelY - 21 + bob);
       ctx.closePath();
       ctx.fill();
     }
 
-    ctx.font = theme === 'retro' ? 'bold 13px "Courier New", monospace' : '800 13px system-ui, sans-serif';
-    const tag = `${p.name} · ${p.score}`;
-    const tagW = ctx.measureText(tag).width + 16;
-    ctx.fillStyle = isActive ? p.color : 'rgba(15, 23, 42, 0.84)';
-    this.roundRect(ctx, -tagW / 2, labelY - 10, tagW, 22, theme === 'retro' ? 0 : 11);
+    ctx.font = theme === 'retro' ? 'bold 11px "Courier New", monospace' : '800 11px system-ui, sans-serif';
+    const tag = p.name;
+    const tagW = ctx.measureText(tag).width + 12;
+    ctx.fillStyle = isActive ? p.color : 'rgba(15, 23, 42, 0.72)';
+    this.roundRect(ctx, -tagW / 2, labelY - 9, tagW, 18, theme === 'retro' ? 0 : 9);
     ctx.fill();
-
-    if (isActive && theme === 'retro') {
-      ctx.strokeStyle = '#ffff55';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(-tagW / 2, labelY - 10, tagW, 22);
-    }
 
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(tag, 0, labelY + 1);
+    ctx.fillText(tag, 0, labelY);
     ctx.restore();
   }
 
