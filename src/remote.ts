@@ -40,10 +40,10 @@ export interface HostCallbacks {
 }
 
 /**
- * Jackbox-style TV Host peer: creates a 4-letter room over WebRTC (PeerJS),
- * accepts 1+ phone/tablet controllers, broadcasts game state, and receives commands.
+ * TV Display Host peer: creates a 4-letter room over WebRTC (PeerJS),
+ * accepts 1+ phone/tablet remote controllers, broadcasts game state, and receives commands.
  */
-export class JackboxHost {
+export class TvDisplayHost {
   private peer: Peer | null = null;
   private connections = new Set<DataConnection>();
   private roomCode = '';
@@ -110,8 +110,8 @@ export class JackboxHost {
       }
       this.callbacks.onError(
         err.type === 'network' || err.type === 'server-error'
-          ? 'Could not reach PeerJS room server — check Wi-Fi or play directly on this screen.'
-          : `Room error (${err.type}). Try starting TV mode again.`,
+          ? 'Could not reach room server — check Wi-Fi or play directly on this screen.'
+          : `Room error (${err.type}). Try starting TV display mode again.`,
       );
     });
   }
@@ -156,10 +156,10 @@ export interface ControllerCallbacks {
 }
 
 /**
- * Jackbox-style Phone / Tablet Controller peer: connects to a TV Host room code
- * and sends touch-friendly aiming, movement, and throw commands.
+ * Phone / Tablet Remote Controller peer: connects to a TV Display room code
+ * and sends touch-friendly aiming, movement, mirror, and throw commands.
  */
-export class JackboxController {
+export class RemoteController {
   private peer: Peer | null = null;
   private conn: DataConnection | null = null;
   private callbacks: ControllerCallbacks;
@@ -176,7 +176,7 @@ export class JackboxController {
       return;
     }
 
-    this.callbacks.onStatus('connecting', `Connecting to TV room ${code}...`);
+    this.callbacks.onStatus('connecting', `Connecting to room ${code}...`);
     const peer = new Peer({ debug: 0 });
     this.peer = peer;
 
@@ -185,7 +185,7 @@ export class JackboxController {
       this.conn = conn;
 
       conn.on('open', () => {
-        this.callbacks.onStatus('connected', `Connected to TV Room ${code}`);
+        this.callbacks.onStatus('connected', `Connected · Room ${code}`);
         conn.send({ type: 'hello' } satisfies ControllerCommand);
       });
 
@@ -208,7 +208,7 @@ export class JackboxController {
       this.callbacks.onStatus(
         'error',
         err.type === 'peer-unavailable'
-          ? `Room ${code} was not found. Make sure TV Host Mode is open!`
+          ? `Room ${code} was not found. Make sure TV Display Mode is open.`
           : `Connection error (${err.type}). Check Wi-Fi and try again.`,
       );
     });

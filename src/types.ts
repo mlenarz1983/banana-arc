@@ -346,7 +346,7 @@ export interface ControllerStateSnapshot {
   theme: ThemeMode;
   muted: boolean;
   scores: Array<{ name: string; color: string; score: number; active: boolean }>;
-  lastTip: string;
+  solutionSummary?: string;
   winnerText?: string;
 }
 
