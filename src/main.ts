@@ -1538,6 +1538,7 @@ class GorillaPhysicsGame {
   private applyControllerSnapshot(snap: ControllerStateSnapshot): void {
     if (this.theme !== snap.theme) {
       document.documentElement.setAttribute('data-theme', snap.theme);
+      this.syncThemeColorMeta(snap.theme);
     }
 
     const ch = CHARACTERS[snap.activeCharacterId];
@@ -1631,9 +1632,17 @@ class GorillaPhysicsGame {
 
   // ==================== Core Game Logic ====================
 
+  private syncThemeColorMeta(theme: ThemeMode): void {
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (meta) {
+      meta.content = theme === 'retro' ? '#000055' : '#0f1722';
+    }
+  }
+
   private setTheme(theme: ThemeMode): void {
     this.theme = theme;
     document.documentElement.setAttribute('data-theme', theme);
+    this.syncThemeColorMeta(theme);
     this.renderer.invalidateBuildings();
     this.syncOptionsUI();
   }
@@ -2647,3 +2656,23 @@ class GorillaPhysicsGame {
 }
 
 new GorillaPhysicsGame();
+
+if (
+  'serviceWorker' in navigator &&
+  (window.location.protocol === 'https:' ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1')
+) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('./sw.js', { scope: './', updateViaCache: 'none' })
+      .then((reg) => {
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') {
+            reg.update().catch(() => undefined);
+          }
+        });
+      })
+      .catch(() => undefined);
+  });
+}
